@@ -1,0 +1,219 @@
+;; ============================================================================
+;; zhajinhua_chips.fc
+;; Zhajinhua Game Chip Purchase Contract for TON Blockchain
+;;
+;; Storage layout (persistent):
+;;   admin_address   : MsgAddressInt (267 bits typical)
+;;   price_per_point : uint64  (nanoTON per 1 game point)
+;;   total_deposits  : uint128 (cumulative nanoTON received)
+;;   user_records    : dict(256-bit key -> cell)
+;;                     key   = sender address hash (uint256)
+;;                     value = total_points:uint64 total_spent:uint128
+;; ============================================================================
+
+;; ----- Op codes -----
+const int op::buy_chips    = 0x1;
+const int op::withdraw     = 0x2;
+const int op::update_price = 0x3;
+const int op::deploy       = 0x4;
+
+;; ----- Error codes -----
+const int error::unauthorized        = 101;
+const int error::insufficient_value  = 102;
+const int error::invalid_price       = 103;
+const int error::nothing_to_withdraw = 104;
+const int error::unknown_op          = 105;
+
+;; ----- Minimum gas reserve kept in contract after withdraw -----
+const int MIN_BALANCE = 50000000;  ;; 0.05 TON
+
+;; ============================================================================
+;; Storage helpers
+;; ============================================================================
+
+;; Load contract state from c4.
+(slice, int, int, cell) load_data() inline {
+    slice ds = get_data().begin_parse();
+    slice admin_address  = ds~load_msg_addr();
+    int   price_per_point = ds~load_uint(64);
+    int   total_deposits  = ds~load_uint(128);
+    cell  user_records    = ds~load_dict();
+    return (admin_address, price_per_point, total_deposits, user_records);
+}
+
+;; Persist contract state to c4.
+() save_data(slice admin_address, int price_per_point, int total_deposits, cell user_records) impure inline {
+    set_data(
+        begin_cell()
+            .store_slice(admin_address)
+            .store_uint(price_per_point, 64)
+            .store_uint(total_deposits, 128)
+            .store_dict(user_records)
+        .end_cell()
+    );
+}
+
+;; ============================================================================
+;; User record helpers
+;; key = sha256 of sender's standard address (workchain + hash)
+;; value cell = total_points:uint64  total_spent:uint128
+;; ============================================================================
+
+(int, int) load_user_record(cell user_records, int sender_hash) inline {
+    (slice val, int found) = user_records.udict_get?(256, sender_hash);
+    if (found) {
+        int total_points = val~load_uint(64);
+        int total_spent  = val~load_uint(128);
+        return (total_points, total_spent);
+    }
+    return (0, 0);
+}
+
+cell save_user_record(cell user_records, int sender_hash, int total_points, int total_spent) inline {
+    cell value = begin_cell()
+        .store_uint(total_points, 64)
+        .store_uint(total_spent, 128)
+    .end_cell();
+    user_records~udict_set_ref(256, sender_hash, value);
+    return user_records;
+}
+
+;; ============================================================================
+;; Internal message handler
+;; ============================================================================
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; Parse incoming message header
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+
+    ;; Ignore bounced messages
+    if (flags & 1) {
+        return ();
+    }
+
+    slice sender_address = cs~load_msg_addr();
+
+    ;; If body is empty, treat as a simple TON transfer (buy chips with entire value)
+    ;; For empty bodies we default to buy_chips behaviour.
+    int op = 0;
+    int query_id = 0;
+
+    if (in_msg_body.slice_bits() >= 64) {
+        op       = in_msg_body~load_uint(32);
+        query_id = in_msg_body~load_uint(32);
+    }
+
+    ;; ---- Deploy (initialisation) ----
+    if (op == op::deploy) {
+        ;; Nothing special needed; state was set via StateInit.
+        ;; Accept the message and return.
+        return ();
+    }
+
+    ;; Load persistent storage
+    (slice admin_address, int price_per_point, int total_deposits, cell user_records) = load_data();
+
+    ;; ================================================================
+    ;; op::buy_chips  (0x1)  --  or bare transfer (op == 0)
+    ;; User sends TON, receives game points credited on-chain.
+    ;; Points = msg_value / price_per_point
+    ;; ================================================================
+    if ((op == op::buy_chips) | (op == 0)) {
+        ;; Ensure meaningful value was sent (at least 1 point worth)
+        throw_unless(error::insufficient_value, msg_value >= price_per_point);
+
+        int points_purchased = msg_value / price_per_point;
+
+        ;; Compute sender hash for dict key
+        (int wc, int addr_hash) = parse_std_addr(sender_address);
+        ;; We use addr_hash directly as the 256-bit dict key.
+
+        ;; Update user record
+        (int prev_points, int prev_spent) = load_user_record(user_records, addr_hash);
+        int new_points = prev_points + points_purchased;
+        int new_spent  = prev_spent + msg_value;
+        user_records = save_user_record(user_records, addr_hash, new_points, new_spent);
+
+        ;; Update totals
+        total_deposits += msg_value;
+
+        save_data(admin_address, price_per_point, total_deposits, user_records);
+        return ();
+    }
+
+    ;; ================================================================
+    ;; Admin-only operations below -- verify sender is admin
+    ;; ================================================================
+    throw_unless(error::unauthorized, equal_slices(sender_address, admin_address));
+
+    ;; ================================================================
+    ;; op::withdraw  (0x2)
+    ;; Admin withdraws accumulated funds, leaving MIN_BALANCE for rent.
+    ;; Body (optional): amount:uint128   -- 0 or omitted means withdraw all.
+    ;; ================================================================
+    if (op == op::withdraw) {
+        int withdraw_amount = 0;
+
+        if (in_msg_body.slice_bits() >= 128) {
+            withdraw_amount = in_msg_body~load_uint(128);
+        }
+
+        int available = my_balance - MIN_BALANCE;
+        throw_unless(error::nothing_to_withdraw, available > 0);
+
+        if ((withdraw_amount == 0) | (withdraw_amount > available)) {
+            withdraw_amount = available;
+        }
+
+        ;; Send funds to admin
+        var msg = begin_cell()
+            .store_uint(0x10, 6)           ;; nobounce
+            .store_slice(admin_address)
+            .store_coins(withdraw_amount)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  ;; empty body/init
+        .end_cell();
+        send_raw_message(msg, 1);  ;; pay transfer fees separately
+
+        save_data(admin_address, price_per_point, total_deposits, user_records);
+        return ();
+    }
+
+    ;; ================================================================
+    ;; op::update_price  (0x3)
+    ;; Admin sets a new price_per_point (nanoTON per 1 game point).
+    ;; Body: new_price:uint64
+    ;; ================================================================
+    if (op == op::update_price) {
+        int new_price = in_msg_body~load_uint(64);
+        throw_unless(error::invalid_price, new_price > 0);
+
+        save_data(admin_address, new_price, total_deposits, user_records);
+        return ();
+    }
+
+    ;; Unknown op
+    throw(error::unknown_op);
+}
+
+;; ============================================================================
+;; GET methods  (off-chain queries)
+;; ============================================================================
+
+;; Returns (price_per_point, total_deposits)
+(int, int) get_contract_info() method_id {
+    (_, int price_per_point, int total_deposits, _) = load_data();
+    return (price_per_point, total_deposits);
+}
+
+;; Returns (total_points, total_spent) for a given user address hash (uint256).
+(int, int) get_user_record(int addr_hash) method_id {
+    (_, _, _, cell user_records) = load_data();
+    return load_user_record(user_records, addr_hash);
+}
+
+;; Returns the admin address as a slice.
+slice get_admin() method_id {
+    (slice admin_address, _, _, _) = load_data();
+    return admin_address;
+}

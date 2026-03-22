@@ -1,0 +1,22 @@
+{
+  "name": "zhajinhua-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:te": "VITE_APP_MODE=te vite",
+    "dev:pe": "VITE_APP_MODE=pe vite",
+    "build": "vite build",
+    "build:te": "VITE_APP_MODE=te vite build --outDir ../backend/static-te",
+    "build:pe": "VITE_APP_MODE=pe vite build --outDir ../backend/static-pe",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "vite": "^5.0.0"
+  }
+}

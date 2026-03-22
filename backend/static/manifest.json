@@ -1,0 +1,9 @@
+{
+  "name": "炸金花",
+  "short_name": "炸金花",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0a0e1a",
+  "theme_color": "#0a0e1a"
+}

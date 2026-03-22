@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - APP_MODE=${APP_MODE:-te}
+      - PORT=8080
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+    volumes:
+      # Persist SQLite database across container restarts
+      - zhajinhua-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  zhajinhua-data:
+
+# =============================================================================
+# Usage examples:
+#
+#   TE mode (test, no wallet):
+#     APP_MODE=te docker compose up -d
+#
+#   PE mode (wallet required):
+#     APP_MODE=pe docker compose up -d
+#
+#   With custom admin password:
+#     ADMIN_PASSWORD=mysecret docker compose up -d
+#
+#   Build and run:
+#     docker compose up -d --build
+#
+#   View logs:
+#     docker compose logs -f app
+# =============================================================================

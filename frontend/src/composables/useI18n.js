@@ -1,0 +1,525 @@
+import { ref } from 'vue'
+
+const locale = ref('en')
+
+const locales = [
+  { code: 'zh', name: '中文' },
+  { code: 'en', name: 'English' },
+  { code: 'ru', name: 'Русский' },
+  { code: 'es', name: 'Español' },
+]
+
+const translations = {
+  zh: {
+    // Login
+    'game.title': '骡子炸金花',
+    'game.subtitle': '骡子开发 · Web3 Edition',
+    'login.nickname': '游戏昵称',
+    'login.nicknamePlaceholder': '输入你的昵称',
+    'login.connectWallet': '连接钱包',
+    'login.enter': '进入大厅',
+    'login.connecting': '连接服务器中...',
+    'login.footer': 'Powered by Blockchain',
+    'login.fullscreenHint': '点击进入全屏游戏',
+    'login.startGame': '开始游戏',
+    'login.rules': '游戏规则',
+    'login.rulesTitle': '炸金花玩法说明',
+    'login.rulesContent': '每人发3张牌，不看牌为暗牌，可选择看牌。\\n\\n牌型大小：豹子 > 同花顺 > 金花 > 顺子 > 对子 > 散牌\\n\\n操作：跟注(跟上家下注)、加注(2倍上家)、比牌(与对手亮牌比大小)、弃牌、全押\\n\\n看牌后下注金额翻倍。每轮20秒操作时间，超时自动弃牌。\\n\\n最后剩余玩家或比牌胜者赢得奖池。\\n\\n每天可领取3次免费500积分（每日共1500积分）。',
+    'login.walletRequired': '请先连接钱包',
+    'login.chooseWallet': '选择钱包',
+    'login.manualAddress': '手动输入地址',
+    'login.invalidAddress': '地址格式无效',
+
+    // Lobby
+    'lobby.chips': '筹码',
+    'lobby.quickStart': '快速开始',
+    'lobby.quickStartDesc': '与AI对战，即开即玩',
+    'lobby.baseBet': '底分',
+    'lobby.bots': '机器人',
+    'lobby.matchPlay': '匹配对战',
+    'lobby.matchDesc': '匹配真人玩家',
+    'lobby.matching': '匹配中...',
+    'lobby.players': '人',
+    'lobby.createRoom': '创建房间',
+    'lobby.inviteDesc': '邀请好友加入',
+    'lobby.createPrivateRoom': '创建私人房间',
+    'lobby.enterRoomCode': '输入房间码加入',
+    'lobby.join': '加入',
+    'lobby.rechargeTitle': '代币充值',
+    'lobby.rechargeDesc': '选择充值金额（模拟）',
+    'lobby.confirmRecharge': '确认充值',
+    'lobby.dailyBonus': '每日奖励',
+    'lobby.dailyBonusDesc': '每天免费领取积分',
+    'lobby.claimBonus': '领取奖励',
+    'lobby.bonusClaimed': '成功领取 {amount} 积分，剩余 {remaining} 次',
+    'lobby.noBonusLeft': '今日奖励已领完',
+    'lobby.bonusRemaining': '今日剩余 {n} 次',
+
+    // Game
+    'game.leave': '离开',
+    'game.roomCode': '房间码',
+    'game.pot': '奖池',
+    'game.round': '第{n}轮',
+    'game.currentBet': '底注',
+    'game.tableTitle': '骡子炸金花',
+    'game.folded': '弃牌',
+    'game.eliminated': '出局',
+    'game.betPlaced': '已下注',
+    'game.look': '看牌',
+    'game.start': '开始游戏',
+    'game.selectCompareTarget': '选择比牌对象',
+    'game.timeLeft': '倒计时',
+    'game.autoFold': '超时自动弃牌',
+
+    // Actions
+    'action.fold': '弃牌',
+    'action.call': '跟注',
+    'action.raise': '加注',
+    'action.compare': '比牌',
+    'action.allIn': '全押',
+
+    // Result
+    'result.youWin': '恭喜获胜!',
+    'result.wins': '{name} 获胜',
+    'result.handType': '牌型',
+    'result.pot': '奖池',
+    'result.bankrupt': '筹码不足，请充值',
+    'result.exit': '退出游戏',
+    'result.playAgain': '再来一局',
+    'result.recharge': '去充值',
+    'result.waitingConfirm': '等待确认',
+    'result.confirmed': '已确认',
+    'result.confirmTimeout': '确认倒计时',
+    'result.rake': '平台抽成',
+    'result.netWin': '净收益',
+
+    // Share
+    'share.copyLink': '复制邀请链接',
+    'share.linkCopied': '链接已复制',
+
+    // Events
+    'event.call': '{name}跟注{amount}',
+    'event.raise': '{name}加注{amount}',
+    'event.fold': '{name}弃牌',
+    'event.allIn': '{name}全押',
+    'event.look': '{name}看牌',
+    'event.compare': '{name} vs {target}，{winner}胜',
+
+    // Hand types
+    'hand.threeOfAKind': '豹子',
+    'hand.straightFlush': '同花顺',
+    'hand.flush': '金花',
+    'hand.straight': '顺子',
+    'hand.pair': '对子',
+    'hand.highCard': '散牌',
+
+    // Toast / errors
+    'toast.roomCodeCopied': '房间码已复制',
+    'toast.linkCopied': '分享链接已复制',
+    'toast.copyFailed': '复制失败，请手动复制',
+    'toast.connectionFailed': '连接失败，正在重试...',
+    'toast.connectionError': '连接失败',
+    'toast.rotatePhone': '请旋转手机至横屏模式',
+    'error.allInOnly': '有人全押，只能弃牌或全押',
+
+    // Common
+    'common.cancel': '取消',
+    'common.player': '玩家',
+    'common.wallet': '钱包',
+  },
+
+  en: {
+    // Login
+    'game.title': 'Mule Zha Jin Hua',
+    'game.subtitle': 'By MuleDev · Web3 Edition',
+    'login.nickname': 'Nickname',
+    'login.nicknamePlaceholder': 'Enter your nickname',
+    'login.connectWallet': 'Connect Wallet',
+    'login.enter': 'Enter Lobby',
+    'login.connecting': 'Connecting to server...',
+    'login.footer': 'Powered by Blockchain',
+    'login.fullscreenHint': 'Tap to enter fullscreen',
+    'login.startGame': 'Start Game',
+    'login.rules': 'Game Rules',
+    'login.rulesTitle': 'How to Play Zha Jin Hua',
+    'login.rulesContent': 'Each player receives 3 cards face-down. You can choose to look at your cards.\\n\\nHand rankings: Three of a Kind > Straight Flush > Flush > Straight > Pair > High Card\\n\\nActions: Call (match previous bet), Raise (2x previous bet), Compare (showdown with opponent), Fold, All In\\n\\nLooking at cards doubles your bet amount. 20 seconds per turn, auto-fold on timeout.\\n\\nLast player standing or showdown winner takes the pot.\\n\\nEvery day you can claim 500 free points 3 times (1,500 points total per day).',
+    'login.walletRequired': 'Please connect wallet first',
+    'login.chooseWallet': 'Choose Wallet',
+    'login.manualAddress': 'Enter address manually',
+    'login.invalidAddress': 'Invalid address format',
+
+    // Lobby
+    'lobby.chips': 'Chips',
+    'lobby.quickStart': 'Quick Start',
+    'lobby.quickStartDesc': 'Play against AI, instant match',
+    'lobby.baseBet': 'Base Bet',
+    'lobby.bots': 'Bots',
+    'lobby.matchPlay': 'Matchmaking',
+    'lobby.matchDesc': 'Find real players',
+    'lobby.matching': 'Matching...',
+    'lobby.players': ' players',
+    'lobby.createRoom': 'Create Room',
+    'lobby.inviteDesc': 'Invite friends to join',
+    'lobby.createPrivateRoom': 'Create Private Room',
+    'lobby.enterRoomCode': 'Enter room code to join',
+    'lobby.join': 'Join',
+    'lobby.rechargeTitle': 'Buy Chips',
+    'lobby.rechargeDesc': 'Select amount (simulated)',
+    'lobby.confirmRecharge': 'Confirm Purchase',
+    'lobby.dailyBonus': 'Daily Bonus',
+    'lobby.dailyBonusDesc': 'Claim free points every day',
+    'lobby.claimBonus': 'Claim Bonus',
+    'lobby.bonusClaimed': 'Claimed {amount} points, {remaining} claims left',
+    'lobby.noBonusLeft': 'No bonus remaining today',
+    'lobby.bonusRemaining': '{n} claims left today',
+
+    // Game
+    'game.leave': 'Leave',
+    'game.roomCode': 'Room Code',
+    'game.pot': 'Pot',
+    'game.round': 'Round {n}',
+    'game.currentBet': 'Ante',
+    'game.tableTitle': 'MULE ZJH',
+    'game.folded': 'Folded',
+    'game.eliminated': 'Eliminated',
+    'game.betPlaced': 'Bet Placed',
+    'game.look': 'Look',
+    'game.start': 'Start Game',
+    'game.selectCompareTarget': 'Choose opponent to compare',
+    'game.timeLeft': 'Time',
+    'game.autoFold': 'Auto-fold on timeout',
+
+    // Actions
+    'action.fold': 'Fold',
+    'action.call': 'Call',
+    'action.raise': 'Raise',
+    'action.compare': 'Compare',
+    'action.allIn': 'All In',
+
+    // Result
+    'result.youWin': 'You Win!',
+    'result.wins': '{name} Wins',
+    'result.handType': 'Hand',
+    'result.pot': 'Pot',
+    'result.bankrupt': 'Not enough chips, please top up',
+    'result.exit': 'Exit Game',
+    'result.playAgain': 'Play Again',
+    'result.recharge': 'Top Up',
+    'result.waitingConfirm': 'Waiting for confirmation',
+    'result.confirmed': 'Confirmed',
+    'result.confirmTimeout': 'Confirm countdown',
+    'result.rake': 'Platform Fee',
+    'result.netWin': 'Net Win',
+
+    // Share
+    'share.copyLink': 'Copy Invite Link',
+    'share.linkCopied': 'Link copied',
+
+    // Events
+    'event.call': '{name} called {amount}',
+    'event.raise': '{name} raised {amount}',
+    'event.fold': '{name} folded',
+    'event.allIn': '{name} went all in',
+    'event.look': '{name} looked at cards',
+    'event.compare': '{name} vs {target}, {winner} wins',
+
+    // Hand types
+    'hand.threeOfAKind': 'Three of a Kind',
+    'hand.straightFlush': 'Straight Flush',
+    'hand.flush': 'Flush',
+    'hand.straight': 'Straight',
+    'hand.pair': 'Pair',
+    'hand.highCard': 'High Card',
+
+    // Toast / errors
+    'toast.roomCodeCopied': 'Room code copied',
+    'toast.linkCopied': 'Share link copied',
+    'toast.copyFailed': 'Copy failed, please copy manually',
+    'toast.connectionFailed': 'Connection failed, retrying...',
+    'toast.connectionError': 'Connection failed',
+    'toast.rotatePhone': 'Please rotate your phone to landscape mode',
+    'error.allInOnly': 'Someone went all in — you must fold or go all in',
+
+    // Common
+    'common.cancel': 'Cancel',
+    'common.player': 'Player',
+    'common.wallet': 'Wallet',
+  },
+
+  ru: {
+    // Login
+    'game.title': 'Мул Чжа Цзинь Хуа',
+    'game.subtitle': 'MuleDev · Web3 Издание',
+    'login.nickname': 'Игровое имя',
+    'login.nicknamePlaceholder': 'Введите ваш никнейм',
+    'login.connectWallet': 'Подключить кошелёк',
+    'login.enter': 'Войти в лобби',
+    'login.connecting': 'Подключение к серверу...',
+    'login.footer': 'Powered by Blockchain',
+    'login.fullscreenHint': 'Нажмите для полноэкранного режима',
+    'login.startGame': 'Начать игру',
+    'login.rules': 'Правила игры',
+    'login.rulesTitle': 'Как играть в Чжа Цзинь Хуа',
+    'login.rulesContent': 'Каждому игроку раздаётся 3 карты рубашкой вверх. Можно посмотреть карты.\\n\\nРанг комбинаций: Тройка > Стрит-флеш > Флеш > Стрит > Пара > Старшая карта\\n\\nДействия: Колл (уравнять ставку), Рейз (2× предыдущая ставка), Сравнить (вскрыть карты), Пас, Ва-банк\\n\\nПросмотр карт удваивает ставку. 20 секунд на ход, автосброс по таймауту.\\n\\nПоследний оставшийся игрок или победитель при сравнении забирает банк.\\n\\nКаждый день можно получить 500 бесплатных очков 3 раза (всего 1500 очков в день).',
+    'login.walletRequired': 'Сначала подключите кошелёк',
+    'login.chooseWallet': 'Выбрать кошелёк',
+    'login.manualAddress': 'Ввести адрес вручную',
+    'login.invalidAddress': 'Неверный формат адреса',
+
+    // Lobby
+    'lobby.chips': 'Фишки',
+    'lobby.quickStart': 'Быстрая игра',
+    'lobby.quickStartDesc': 'Игра с ботами, моментальный старт',
+    'lobby.baseBet': 'Базовая ставка',
+    'lobby.bots': 'Боты',
+    'lobby.matchPlay': 'Поиск игры',
+    'lobby.matchDesc': 'Найти реальных игроков',
+    'lobby.matching': 'Поиск...',
+    'lobby.players': ' игроков',
+    'lobby.createRoom': 'Создать комнату',
+    'lobby.inviteDesc': 'Пригласить друзей',
+    'lobby.createPrivateRoom': 'Создать приватную комнату',
+    'lobby.enterRoomCode': 'Введите код комнаты',
+    'lobby.join': 'Войти',
+    'lobby.rechargeTitle': 'Пополнить фишки',
+    'lobby.rechargeDesc': 'Выберите сумму (демо)',
+    'lobby.confirmRecharge': 'Подтвердить покупку',
+    'lobby.dailyBonus': 'Ежедневный бонус',
+    'lobby.dailyBonusDesc': 'Получайте бесплатные очки каждый день',
+    'lobby.claimBonus': 'Получить бонус',
+    'lobby.bonusClaimed': 'Получено {amount} очков, осталось {remaining} раз',
+    'lobby.noBonusLeft': 'Бонусы на сегодня закончились',
+    'lobby.bonusRemaining': 'Осталось {n} раз сегодня',
+
+    // Game
+    'game.leave': 'Выйти',
+    'game.roomCode': 'Код комнаты',
+    'game.pot': 'Банк',
+    'game.round': 'Раунд {n}',
+    'game.currentBet': 'Анте',
+    'game.tableTitle': 'МУЛE ZJH',
+    'game.folded': 'Сбросил',
+    'game.eliminated': 'Выбыл',
+    'game.betPlaced': 'Ставка сделана',
+    'game.look': 'Посмотреть',
+    'game.start': 'Начать игру',
+    'game.selectCompareTarget': 'Выберите соперника для сравнения',
+    'game.timeLeft': 'Время',
+    'game.autoFold': 'Автосброс по таймауту',
+
+    // Actions
+    'action.fold': 'Пас',
+    'action.call': 'Колл',
+    'action.raise': 'Рейз',
+    'action.compare': 'Сравнить',
+    'action.allIn': 'Ва-банк',
+
+    // Result
+    'result.youWin': 'Вы выиграли!',
+    'result.wins': '{name} выиграл',
+    'result.handType': 'Комбинация',
+    'result.pot': 'Банк',
+    'result.bankrupt': 'Недостаточно фишек, пополните баланс',
+    'result.exit': 'Выйти из игры',
+    'result.playAgain': 'Играть снова',
+    'result.recharge': 'Пополнить',
+    'result.waitingConfirm': 'Ожидание подтверждения',
+    'result.confirmed': 'Подтверждено',
+    'result.confirmTimeout': 'Таймер подтверждения',
+    'result.rake': 'Комиссия',
+    'result.netWin': 'Чистый выигрыш',
+
+    // Share
+    'share.copyLink': 'Скопировать ссылку',
+    'share.linkCopied': 'Ссылка скопирована',
+
+    // Events
+    'event.call': '{name} уравнял {amount}',
+    'event.raise': '{name} поднял до {amount}',
+    'event.fold': '{name} сбросил карты',
+    'event.allIn': '{name} пошёл ва-банк',
+    'event.look': '{name} посмотрел карты',
+    'event.compare': '{name} vs {target}, {winner} выиграл',
+
+    // Hand types
+    'hand.threeOfAKind': 'Тройка',
+    'hand.straightFlush': 'Стрит-флеш',
+    'hand.flush': 'Флеш',
+    'hand.straight': 'Стрит',
+    'hand.pair': 'Пара',
+    'hand.highCard': 'Старшая карта',
+
+    // Toast / errors
+    'toast.roomCodeCopied': 'Код комнаты скопирован',
+    'toast.linkCopied': 'Ссылка скопирована',
+    'toast.copyFailed': 'Ошибка копирования, скопируйте вручную',
+    'toast.connectionFailed': 'Ошибка подключения, повторная попытка...',
+    'toast.connectionError': 'Ошибка подключения',
+    'toast.rotatePhone': 'Поверните телефон в горизонтальное положение',
+    'error.allInOnly': 'Кто-то пошёл ва-банк — можно только сбросить или идти ва-банк',
+
+    // Common
+    'common.cancel': 'Отмена',
+    'common.player': 'Игрок',
+    'common.wallet': 'Кошелёк',
+  },
+
+  es: {
+    // Login
+    'game.title': 'Mule Zha Jin Hua',
+    'game.subtitle': 'Por MuleDev · Web3 Edición',
+    'login.nickname': 'Apodo',
+    'login.nicknamePlaceholder': 'Ingresa tu apodo',
+    'login.connectWallet': 'Conectar billetera',
+    'login.enter': 'Entrar al lobby',
+    'login.connecting': 'Conectando al servidor...',
+    'login.footer': 'Powered by Blockchain',
+    'login.fullscreenHint': 'Toca para pantalla completa',
+    'login.startGame': 'Iniciar juego',
+    'login.rules': 'Reglas del juego',
+    'login.rulesTitle': 'Cómo jugar Zha Jin Hua',
+    'login.rulesContent': 'Cada jugador recibe 3 cartas boca abajo. Puedes elegir ver tus cartas.\\n\\nJerarquía de manos: Tercia > Escalera de color > Color > Escalera > Par > Carta alta\\n\\nAcciones: Igualar (igualar apuesta anterior), Subir (2× apuesta anterior), Comparar (enfrentamiento), Retirarse, All In\\n\\nVer las cartas duplica tu apuesta. 20 segundos por turno, auto-retiro por tiempo.\\n\\nEl último jugador en pie o el ganador de la comparación se lleva el pozo.\\n\\nCada día puedes reclamar 500 puntos gratis 3 veces (1,500 puntos en total por día).',
+    'login.walletRequired': 'Conecta tu billetera primero',
+    'login.chooseWallet': 'Elegir billetera',
+    'login.manualAddress': 'Ingresar dirección manualmente',
+    'login.invalidAddress': 'Formato de dirección inválido',
+
+    // Lobby
+    'lobby.chips': 'Fichas',
+    'lobby.quickStart': 'Juego rápido',
+    'lobby.quickStartDesc': 'Juega contra la IA al instante',
+    'lobby.baseBet': 'Apuesta base',
+    'lobby.bots': 'Bots',
+    'lobby.matchPlay': 'Buscar partida',
+    'lobby.matchDesc': 'Encontrar jugadores reales',
+    'lobby.matching': 'Buscando...',
+    'lobby.players': ' jugadores',
+    'lobby.createRoom': 'Crear sala',
+    'lobby.inviteDesc': 'Invitar amigos',
+    'lobby.createPrivateRoom': 'Crear sala privada',
+    'lobby.enterRoomCode': 'Ingresa el código de sala',
+    'lobby.join': 'Unirse',
+    'lobby.rechargeTitle': 'Comprar fichas',
+    'lobby.rechargeDesc': 'Selecciona el monto (simulado)',
+    'lobby.confirmRecharge': 'Confirmar compra',
+    'lobby.dailyBonus': 'Bono diario',
+    'lobby.dailyBonusDesc': 'Reclama puntos gratis cada día',
+    'lobby.claimBonus': 'Reclamar bono',
+    'lobby.bonusClaimed': 'Reclamaste {amount} puntos, quedan {remaining} intentos',
+    'lobby.noBonusLeft': 'No quedan bonos por hoy',
+    'lobby.bonusRemaining': 'Quedan {n} intentos hoy',
+
+    // Game
+    'game.leave': 'Salir',
+    'game.roomCode': 'Código de sala',
+    'game.pot': 'Pozo',
+    'game.round': 'Ronda {n}',
+    'game.currentBet': 'Ante',
+    'game.tableTitle': 'MULE ZJH',
+    'game.folded': 'Retirado',
+    'game.eliminated': 'Eliminado',
+    'game.betPlaced': 'Apuesta hecha',
+    'game.look': 'Ver cartas',
+    'game.start': 'Iniciar juego',
+    'game.selectCompareTarget': 'Elige rival para comparar',
+    'game.timeLeft': 'Tiempo',
+    'game.autoFold': 'Auto-retirarse por tiempo',
+
+    // Actions
+    'action.fold': 'Retirarse',
+    'action.call': 'Igualar',
+    'action.raise': 'Subir',
+    'action.compare': 'Comparar',
+    'action.allIn': 'All In',
+
+    // Result
+    'result.youWin': '!Ganaste!',
+    'result.wins': '{name} gana',
+    'result.handType': 'Mano',
+    'result.pot': 'Pozo',
+    'result.bankrupt': 'Fichas insuficientes, recarga tu saldo',
+    'result.exit': 'Salir del juego',
+    'result.playAgain': 'Jugar de nuevo',
+    'result.recharge': 'Recargar',
+    'result.waitingConfirm': 'Esperando confirmación',
+    'result.confirmed': 'Confirmado',
+    'result.confirmTimeout': 'Cuenta regresiva',
+    'result.rake': 'Comisión',
+    'result.netWin': 'Ganancia neta',
+
+    // Share
+    'share.copyLink': 'Copiar enlace',
+    'share.linkCopied': 'Enlace copiado',
+
+    // Events
+    'event.call': '{name} igualó {amount}',
+    'event.raise': '{name} subió a {amount}',
+    'event.fold': '{name} se retiró',
+    'event.allIn': '{name} fue all in',
+    'event.look': '{name} vio sus cartas',
+    'event.compare': '{name} vs {target}, {winner} gana',
+
+    // Hand types
+    'hand.threeOfAKind': 'Tercia',
+    'hand.straightFlush': 'Escalera de color',
+    'hand.flush': 'Color',
+    'hand.straight': 'Escalera',
+    'hand.pair': 'Par',
+    'hand.highCard': 'Carta alta',
+
+    // Toast / errors
+    'toast.roomCodeCopied': 'Código de sala copiado',
+    'toast.linkCopied': 'Enlace copiado',
+    'toast.copyFailed': 'Error al copiar, cópialo manualmente',
+    'toast.connectionFailed': 'Error de conexión, reintentando...',
+    'toast.connectionError': 'Error de conexión',
+    'toast.rotatePhone': 'Gira tu teléfono a modo horizontal',
+    'error.allInOnly': 'Alguien fue all in — solo puedes retirarte o ir all in',
+
+    // Common
+    'common.cancel': 'Cancelar',
+    'common.player': 'Jugador',
+    'common.wallet': 'Billetera',
+  },
+}
+
+/**
+ * Translate a key, with optional interpolation.
+ * Usage: t('game.round', { n: 3 }) → "Round 3"
+ *        t('result.wins', { name: 'Alice' }) → "Alice Wins"
+ */
+function t(key, params) {
+  const lang = locale.value
+  const dict = translations[lang] || translations.en
+  let str = dict[key]
+
+  if (str === undefined) {
+    // Fallback to English, then return the key itself
+    str = translations.en[key]
+    if (str === undefined) return key
+  }
+
+  if (params) {
+    Object.keys(params).forEach((p) => {
+      str = str.replace(new RegExp(`\\{${p}\\}`, 'g'), params[p])
+    })
+  }
+
+  return str
+}
+
+function setLocale(lang) {
+  const valid = locales.some((l) => l.code === lang)
+  if (valid) {
+    locale.value = lang
+  }
+}
+
+export function useI18n() {
+  return {
+    locale,
+    t,
+    setLocale,
+    locales,
+  }
+}
