@@ -352,3 +352,22 @@ func HandTypeName(rank int) string {
 	}
 	return "未知"
 }
+
+// HandTypeKey returns a stable translation key for the hand rank.
+func HandTypeKey(rank int) string {
+	switch rank {
+	case HandTypeThreeOfAKind:
+		return "hand.threeOfAKind"
+	case HandTypeStraightFlush:
+		return "hand.straightFlush"
+	case HandTypeFlush:
+		return "hand.flush"
+	case HandTypeStraight:
+		return "hand.straight"
+	case HandTypePair:
+		return "hand.pair"
+	case HandTypeSingle:
+		return "hand.highCard"
+	}
+	return "hand.unknown"
+}

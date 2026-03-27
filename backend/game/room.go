@@ -7,12 +7,17 @@ import (
 	"time"
 )
 
+const (
+	// MaxRoundsPerGame is the maximum number of rounds before the game ends (determines winner by best hand)
+	MaxRoundsPerGame = 20
+)
+
 // SidePot represents a pot that only certain players are eligible to win
 type SidePot struct {
-	Amount   int      `json:"amount"`
-	Eligible []string `json:"eligible"` // player IDs eligible for this pot
-	WinnerID string   `json:"winnerId"` // winner of this pot (set after resolution)
-	WinAmount int     `json:"winAmount"` // amount awarded after rake (set after resolution)
+	Amount    int      `json:"amount"`
+	Eligible  []string `json:"eligible"`  // player IDs eligible for this pot
+	WinnerID  string   `json:"winnerId"`  // winner of this pot (set after resolution)
+	WinAmount int      `json:"winAmount"` // amount awarded after rake (set after resolution)
 }
 
 // ActionType 操作类型
@@ -38,26 +43,32 @@ const (
 
 // Room 游戏房间
 type Room struct {
-	ID                string           `json:"id"`
-	RoomCode          string           `json:"roomCode"`
-	State             RoomState        `json:"state"`
-	Players           []*Player        `json:"players"`
-	MaxPlayers        int              `json:"maxPlayers"`
-	BaseBet           int              `json:"baseBet"`
-	CurrentBet        int              `json:"currentBet"`
-	LastBet           int              `json:"lastBet"`
-	Pot               int              `json:"pot"`
-	AnteTotal         int              `json:"anteTotal"`
-	Round             int              `json:"round"`
-	TurnIndex         int              `json:"turnIndex"`
-	DealerIndex       int              `json:"dealerIndex"`
-	GoodBias          int              `json:"goodBias"` // 好牌权重 1-5
-	HasAllIn          bool             `json:"hasAllIn"`
-	SidePots          []SidePot        `json:"sidePots,omitempty"`
-	TurnStart         time.Time        `json:"-"`
-	CreatedAt         time.Time        `json:"createdAt"`
-	ReadyForNext      map[string]bool  `json:"-"`
-	NextRoundDeadline time.Time        `json:"-"`
+	ID                string          `json:"id"`
+	RoomCode          string          `json:"roomCode"`
+	OwnerID           string          `json:"ownerId"`
+	IsPrivate         bool            `json:"isPrivate"`
+	IsMatch           bool            `json:"isMatch"`
+	State             RoomState       `json:"state"`
+	Players           []*Player       `json:"players"`
+	Spectators        []*Player       `json:"spectators"`
+	MaxPlayers        int             `json:"maxPlayers"`
+	BaseBet           int             `json:"baseBet"`
+	CurrentBet        int             `json:"currentBet"`
+	LastBet           int             `json:"lastBet"`
+	Pot               int             `json:"pot"`
+	AnteTotal         int             `json:"anteTotal"`
+	Round             int             `json:"round"`
+	TurnIndex         int             `json:"turnIndex"`
+	DealerIndex       int             `json:"dealerIndex"`
+	GoodBias          int             `json:"goodBias"` // 好牌权重 1-5
+	HasAllIn          bool            `json:"hasAllIn"`
+	LastAllInAmount   int             `json:"lastAllInAmount"`
+	LastAllInPlayerID string          `json:"lastAllInPlayerId"`
+	SidePots          []SidePot       `json:"sidePots,omitempty"`
+	TurnStart         time.Time       `json:"-"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	ReadyForNext      map[string]bool `json:"-"`
+	NextRoundDeadline time.Time       `json:"-"`
 	Broadcast         func(msg interface{})
 	mu                sync.RWMutex
 }
@@ -86,6 +97,7 @@ func NewRoom(id string, maxPlayers int) *Room {
 		ID:         id,
 		State:      RoomWaiting,
 		Players:    make([]*Player, 0, maxPlayers),
+		Spectators: make([]*Player, 0),
 		MaxPlayers: maxPlayers,
 		BaseBet:    10,
 		CurrentBet: 10,
@@ -98,6 +110,11 @@ func NewRoom(id string, maxPlayers int) *Room {
 func (r *Room) AddPlayer(p *Player) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, existing := range r.Players {
+		if existing.ID == p.ID {
+			return fmt.Errorf("你已在房间中")
+		}
+	}
 	if len(r.Players) >= r.MaxPlayers {
 		return fmt.Errorf("房间已满")
 	}
@@ -105,7 +122,26 @@ func (r *Room) AddPlayer(p *Player) error {
 		return fmt.Errorf("游戏进行中")
 	}
 	p.Seat = len(r.Players)
+	p.IsSpectator = false
 	r.Players = append(r.Players, p)
+	return nil
+}
+
+func (r *Room) AddSpectator(p *Player) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.Spectators {
+		if existing.ID == p.ID {
+			return nil
+		}
+	}
+	p.IsSpectator = true
+	p.Seat = -1
+	p.State = PlayerWaiting
+	p.Looked = false
+	p.BetTotal = 0
+	p.Hand = Hand{}
+	r.Spectators = append(r.Spectators, p)
 	return nil
 }
 
@@ -125,11 +161,33 @@ func (r *Room) RemovePlayer(id string) {
 	}
 }
 
+func (r *Room) RemoveSpectator(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, p := range r.Spectators {
+		if p.ID == id {
+			r.Spectators = append(r.Spectators[:i], r.Spectators[i+1:]...)
+			break
+		}
+	}
+}
+
 // FindPlayer 查找玩家
 func (r *Room) FindPlayer(id string) *Player {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, p := range r.Players {
+		if p.ID == id {
+			return p
+		}
+	}
+	return nil
+}
+
+func (r *Room) FindSpectator(id string) *Player {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.Spectators {
 		if p.ID == id {
 			return p
 		}
@@ -177,6 +235,8 @@ func (r *Room) StartGame() error {
 
 	r.State = RoomPlaying
 	r.HasAllIn = false
+	r.LastAllInAmount = 0
+	r.LastAllInPlayerID = ""
 	r.SidePots = nil
 	r.Round = 1
 	r.CurrentBet = r.BaseBet
@@ -236,14 +296,22 @@ func (r *Room) CurrentTurnPlayer() *Player {
 func (r *Room) NextTurn() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	foundAlive := false
 	for i := 0; i < len(r.Players); i++ {
 		r.TurnIndex = (r.TurnIndex + 1) % len(r.Players)
 		p := r.Players[r.TurnIndex]
 		if p.State == PlayerPlaying || p.State == PlayerAllIn {
-			r.Round++
-			r.TurnStart = time.Now()
-			return
+			foundAlive = true
+			break
 		}
+	}
+
+	// Always update Round and TurnStart, regardless of whether we found an alive player
+	// This prevents the game loop from getting stuck if all players are folded
+	if foundAlive {
+		r.Round++
+		r.TurnStart = time.Now()
 	}
 }
 
@@ -279,13 +347,13 @@ func (r *Room) ProcessAction(playerID string, action Action) (*GameEvent, error)
 	if player.Looked {
 		minBet = minBet * 2
 	}
-	if player.Chips < minBet && action.Type != ActionFold && action.Type != ActionAllIn {
+	if player.Chips < minBet && action.Type != ActionFold && action.Type != ActionAllIn && action.Type != ActionCompare {
 		action = Action{Type: ActionFold}
 	}
 
-	// 如果有人全押，其他人只能弃牌或全押
-	if r.HasAllIn && action.Type != ActionFold && action.Type != ActionAllIn {
-		return nil, fmt.Errorf("有人全押，只能弃牌或全押")
+	// 如果有人全押，其他人只能弃牌、全押或比牌
+	if r.HasAllIn && action.Type != ActionFold && action.Type != ActionAllIn && action.Type != ActionCompare {
+		return nil, fmt.Errorf("有人全押，只能弃牌、比牌或全押")
 	}
 
 	event := &GameEvent{
@@ -323,12 +391,13 @@ func (r *Room) ProcessAction(playerID string, action Action) (*GameEvent, error)
 		if prevBet <= 0 {
 			prevBet = r.BaseBet
 		}
-		amount := prevBet * 2
-		if action.Amount > amount {
-			amount = action.Amount
-		}
+		minAmount := prevBet * 2
 		if player.Looked {
-			amount = amount * 2
+			minAmount = minAmount * 2
+		}
+		amount := action.Amount
+		if amount < minAmount {
+			amount = minAmount
 		}
 		actual := safeDeduct(player, amount)
 		// Update LastBet to the blind-equivalent amount
@@ -357,6 +426,8 @@ func (r *Room) ProcessAction(playerID string, action Action) (*GameEvent, error)
 		player.State = PlayerAllIn
 		r.Pot += remaining
 		r.HasAllIn = true
+		r.LastAllInAmount = remaining
+		r.LastAllInPlayerID = player.ID
 		event.Type = "allin"
 		event.Amount = remaining
 
@@ -368,15 +439,23 @@ func (r *Room) ProcessAction(playerID string, action Action) (*GameEvent, error)
 		if target.State != PlayerPlaying && target.State != PlayerAllIn {
 			return nil, fmt.Errorf("目标玩家已出局")
 		}
-		cost := target.BetTotal
-		minCost := r.CurrentBet * 2
-		if player.Looked {
-			minCost = r.CurrentBet * 4
+
+		baseCost := r.CurrentBet
+		if r.HasAllIn {
+			if target.State != PlayerAllIn {
+				return nil, fmt.Errorf("全押状态下只能比牌全押玩家")
+			}
+			baseCost = r.LastAllInAmount
+			if baseCost <= 0 {
+				baseCost = target.BetTotal
+			}
+			if player.Chips < baseCost {
+				return nil, fmt.Errorf("筹码不足，只能弃牌或全押")
+			}
+		} else if player.Looked {
+			baseCost = r.CurrentBet * 2
 		}
-		if cost < minCost {
-			cost = minCost
-		}
-		actual := safeDeduct(player, cost)
+		actual := safeDeduct(player, baseCost)
 		player.BetTotal += actual
 		r.Pot += actual
 
@@ -384,11 +463,23 @@ func (r *Room) ProcessAction(playerID string, action Action) (*GameEvent, error)
 		event.Type = "compare"
 		event.TargetID = target.ID
 		event.TargetName = target.Name
+		event.Amount = actual
+
 		if result > 0 {
+			// Initiator wins
 			target.State = PlayerCompared
+			if r.HasAllIn && player.Chips == 0 {
+				player.State = PlayerAllIn
+			}
 			event.WinnerID = player.ID
+		} else if result == 0 {
+			// Draw: both pay half or full amount back (simplified: just mark as draw)
+			if r.HasAllIn && player.Chips == 0 {
+				player.State = PlayerAllIn
+			}
+			event.WinnerID = "draw"
 		} else {
-			// 平局或输都算发起者输
+			// Initiator loses
 			player.State = PlayerCompared
 			event.WinnerID = target.ID
 		}
@@ -535,13 +626,13 @@ func (r *Room) EndGame(winner *Player) int {
 
 		rakeRemaining := rake
 		for i := range pots {
-			// Proportional rake from each pot
+			// Proportional rake from each pot (use int64 to avoid overflow)
 			var potRake int
 			if i == len(pots)-1 {
 				// Last pot gets remaining rake to avoid rounding issues
 				potRake = rakeRemaining
 			} else {
-				potRake = rake * pots[i].Amount / totalPotAmount
+				potRake = int(int64(rake) * int64(pots[i].Amount) / int64(totalPotAmount))
 			}
 			if potRake > pots[i].Amount {
 				potRake = pots[i].Amount
@@ -650,35 +741,85 @@ func (r *Room) UnconfirmedPlayers() []string {
 	return ids
 }
 
+// PromoteSpectatorsForNextRound turns current spectators into normal room users
+// after settlement so they can choose to stay for the next round or leave.
+func (r *Room) PromoteSpectatorsForNextRound() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.Spectators) == 0 {
+		return
+	}
+	if r.MaxPlayers < len(r.Players)+len(r.Spectators) {
+		r.MaxPlayers = len(r.Players) + len(r.Spectators)
+	}
+	for _, p := range r.Spectators {
+		if p == nil {
+			continue
+		}
+		p.IsSpectator = false
+		p.Seat = len(r.Players)
+		p.State = PlayerReady
+		p.Looked = false
+		p.BetTotal = 0
+		p.Hand = Hand{}
+		r.Players = append(r.Players, p)
+	}
+	r.Spectators = nil
+}
+
 // HandlePlayerLeave handles a player leaving the room. Returns true if the
 // leaving player was the current turn player (caller should advance turn).
+// During an active hand the player is only marked folded so settlement can
+// still account for prior bets. Outside active play the player is removed.
 func (r *Room) HandlePlayerLeave(playerID string) (wasTurn bool) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i, p := range r.Spectators {
+		if p.ID == playerID {
+			r.Spectators = append(r.Spectators[:i], r.Spectators[i+1:]...)
+			return false
+		}
+	}
+
+	if r.State != RoomPlaying {
+		for i, p := range r.Players {
+			if p.ID == playerID {
+				r.Players = append(r.Players[:i], r.Players[i+1:]...)
+				for j := i; j < len(r.Players); j++ {
+					r.Players[j].Seat = j
+				}
+				if len(r.Players) > 0 && r.TurnIndex >= len(r.Players) {
+					r.TurnIndex = r.TurnIndex % len(r.Players)
+				} else if len(r.Players) == 0 {
+					r.TurnIndex = 0
+				}
+				break
+			}
+		}
+		return false
+	}
+
 	// Check if it was this player's turn
-	if r.State == RoomPlaying && len(r.Players) > 0 {
+	if len(r.Players) > 0 {
 		if r.TurnIndex < len(r.Players) && r.Players[r.TurnIndex].ID == playerID {
 			wasTurn = true
 		}
 	}
-	// Mark as folded
+	// Mark as folded (do NOT remove from players list for proper settlement)
 	for _, p := range r.Players {
 		if p.ID == playerID {
 			p.State = PlayerFolded
 			break
 		}
 	}
-	r.mu.Unlock()
 
-	// Remove from player list
-	r.RemovePlayer(playerID)
-
-	// Fix TurnIndex if it's now out of bounds
-	r.mu.Lock()
-	if len(r.Players) > 0 && r.TurnIndex >= len(r.Players) {
-		r.TurnIndex = r.TurnIndex % len(r.Players)
+	// Fix TurnIndex if it's pointing to folded player
+	if r.TurnIndex < len(r.Players) && r.Players[r.TurnIndex].ID == playerID {
+		// Need to find next alive player, will be done by NextTurn()
+		// Just mark that we need to advance
+		wasTurn = true
 	}
-	r.mu.Unlock()
-
 	return wasTurn
 }
 
@@ -706,22 +847,40 @@ func (r *Room) GetRoomInfo(forPlayerID string) map[string]interface{} {
 		players = append(players, pi)
 	}
 
+	spectators := make([]map[string]interface{}, 0, len(r.Spectators))
+	for _, p := range r.Spectators {
+		spectators = append(spectators, map[string]interface{}{
+			"id":          p.ID,
+			"name":        p.Name,
+			"avatar":      p.Avatar,
+			"isBot":       p.IsBot,
+			"isSpectator": true,
+		})
+	}
+
 	info := map[string]interface{}{
-		"id":          r.ID,
-		"roomCode":    r.RoomCode,
-		"state":       r.State,
-		"players":     players,
-		"maxPlayers":  r.MaxPlayers,
-		"baseBet":     r.BaseBet,
-		"currentBet":  r.CurrentBet,
-		"lastBet":     r.LastBet,
-		"pot":         r.Pot,
-		"anteTotal":   r.AnteTotal,
-		"round":       r.Round,
-		"turnIndex":   r.TurnIndex,
-		"dealerIndex": r.DealerIndex,
-		"hasAllIn":    r.HasAllIn,
-		"turnDeadline": r.TurnStart.Add(20 * time.Second).UnixMilli(),
+		"id":                r.ID,
+		"roomCode":          r.RoomCode,
+		"ownerId":           r.OwnerID,
+		"isPrivate":         r.IsPrivate,
+		"isMatch":           r.IsMatch,
+		"isSpectator":       r.FindSpectator(forPlayerID) != nil,
+		"state":             r.State,
+		"players":           players,
+		"spectators":        spectators,
+		"maxPlayers":        r.MaxPlayers,
+		"baseBet":           r.BaseBet,
+		"currentBet":        r.CurrentBet,
+		"lastBet":           r.LastBet,
+		"pot":               r.Pot,
+		"anteTotal":         r.AnteTotal,
+		"round":             r.Round,
+		"turnIndex":         r.TurnIndex,
+		"dealerIndex":       r.DealerIndex,
+		"hasAllIn":          r.HasAllIn,
+		"lastAllInAmount":   r.LastAllInAmount,
+		"lastAllInPlayerId": r.LastAllInPlayerID,
+		"turnDeadline":      r.TurnStart.Add(20 * time.Second).UnixMilli(),
 	}
 
 	if r.State == RoomFinished && !r.NextRoundDeadline.IsZero() {

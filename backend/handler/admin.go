@@ -22,6 +22,7 @@ func init() {
 // RegisterAdminRoutes registers all admin HTTP routes.
 func RegisterAdminRoutes() {
 	http.HandleFunc("/admin", handleAdminPage)
+	http.HandleFunc("/api/config/public", handlePublicConfig)
 	http.HandleFunc("/admin/api/stats", adminAuth(handleAdminStats))
 	http.HandleFunc("/admin/api/config", adminAuth(handleAdminConfig))
 	http.HandleFunc("/admin/api/users", adminAuth(handleAdminUsers))
@@ -105,6 +106,21 @@ func handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
+}
+
+func handlePublicConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	all := game.GetAllConfig()
+	public := map[string]string{
+		"social.websiteUrl":  all["social.websiteUrl"],
+		"social.telegramUrl": all["social.telegramUrl"],
+		"social.discordUrl":  all["social.discordUrl"],
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(public)
 }
 
 func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +335,7 @@ const defaultConfigs = {
   'game.maxPlayersPerRoom':'6','game.turnTimerSeconds':'20','game.maxRounds':'20','game.goodBias':'3',
   'bonus.amount':'500','bonus.maxClaimsPerDay':'3','bonus.enabled':'true',
   'rake.enabled':'true',
+  'social.websiteUrl':'','social.telegramUrl':'','social.discordUrl':'',
   'contract.evm.address':'','contract.evm.enabled':'false',
   'contract.ton.address':'','contract.ton.enabled':'false',
   'contract.sol.address':'','contract.sol.enabled':'false',

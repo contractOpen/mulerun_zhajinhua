@@ -12,6 +12,14 @@ import (
 // DB is the singleton database connection.
 var DB *sql.DB
 
+func utcNow() time.Time {
+	return time.Now().UTC()
+}
+
+func utcTodayString() string {
+	return utcNow().Format("2006-01-02")
+}
+
 // InitDB opens (or creates) the SQLite database at the given path and
 // ensures the required tables exist.
 func InitDB(path string) {
@@ -26,6 +34,11 @@ func InitDB(path string) {
 		log.Fatalf("failed to set WAL mode: %v", err)
 	}
 
+	// Enable foreign key constraints
+	if _, err := DB.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		log.Fatalf("failed to enable foreign keys: %v", err)
+	}
+
 	createTables := `
 	CREATE TABLE IF NOT EXISTS users (
 		id         INTEGER  PRIMARY KEY,
@@ -37,7 +50,7 @@ func InitDB(path string) {
 
 	CREATE TABLE IF NOT EXISTS transactions (
 		id         INTEGER  PRIMARY KEY,
-		player_id  TEXT,
+		player_id  TEXT     NOT NULL REFERENCES users(player_id) ON DELETE CASCADE,
 		type       TEXT,
 		amount     INTEGER,
 		room_id    TEXT,
@@ -48,7 +61,7 @@ func InitDB(path string) {
 	CREATE TABLE IF NOT EXISTS platform_fees (
 		id         INTEGER  PRIMARY KEY,
 		room_id    TEXT,
-		winner_id  TEXT,
+		winner_id  TEXT     REFERENCES users(player_id) ON DELETE SET NULL,
 		amount     INTEGER,
 		players    INTEGER,
 		base_bet   INTEGER,
@@ -57,9 +70,10 @@ func InitDB(path string) {
 
 	CREATE TABLE IF NOT EXISTS daily_bonus (
 		id         INTEGER  PRIMARY KEY,
-		player_id  TEXT,
+		player_id  TEXT     NOT NULL REFERENCES users(player_id) ON DELETE CASCADE,
 		claimed_at DATETIME,
-		amount     INTEGER
+		amount     INTEGER,
+		bonus_type TEXT     DEFAULT 'daily'
 	);
 
 	CREATE TABLE IF NOT EXISTS config (
@@ -69,9 +83,9 @@ func InitDB(path string) {
 
 	CREATE TABLE IF NOT EXISTS recharge_txns (
 		id         INTEGER  PRIMARY KEY,
-		tx_hash    TEXT     UNIQUE,
+		tx_hash    TEXT,
 		chain      TEXT,
-		player_id  TEXT,
+		player_id  TEXT     NOT NULL REFERENCES users(player_id) ON DELETE CASCADE,
 		amount     INTEGER,
 		points     INTEGER,
 		status     TEXT     DEFAULT 'pending',
@@ -83,35 +97,112 @@ func InitDB(path string) {
 		log.Fatalf("failed to create tables: %v", err)
 	}
 
-	// Migrate: add wallet columns if they don't exist
+	// Migrate: add composite unique constraint on (tx_hash, chain) to prevent cross-chain tx_hash collision
 	migrations := []string{
 		"ALTER TABLE users ADD COLUMN wallet_address TEXT DEFAULT ''",
 		"ALTER TABLE users ADD COLUMN wallet_chain TEXT DEFAULT ''",
+		"ALTER TABLE daily_bonus ADD COLUMN bonus_type TEXT DEFAULT 'daily'",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_recharge_txn_unique ON recharge_txns(tx_hash, chain)",
+		`UPDATE daily_bonus
+		SET bonus_type = 'signup'
+		WHERE EXISTS (
+			SELECT 1
+			FROM transactions t
+			WHERE t.player_id = daily_bonus.player_id
+			  AND t.type = 'bonus'
+			  AND t.detail = 'signup_bonus'
+			  AND ABS(strftime('%s', t.created_at) - strftime('%s', daily_bonus.claimed_at)) <= 5
+		)`,
+		"UPDATE daily_bonus SET bonus_type = 'daily' WHERE COALESCE(bonus_type, '') = ''",
 	}
 	for _, m := range migrations {
-		DB.Exec(m) // Ignore errors (column may already exist)
+		DB.Exec(m) // Ignore errors (column/index may already exist)
 	}
 
 	log.Println("database initialised:", path)
 }
 
 // GetOrCreateUser returns the chip count for the given player. If the player
-// does not exist yet a new row is inserted with the default 1000 chips.
+// does not exist yet a new row is inserted with the default 1000 chips and
+// automatically grants 1 daily bonus (500 chips).
+// If name is provided and user exists, update the name.
 func GetOrCreateUser(playerID, name string) (chips int, err error) {
 	row := DB.QueryRow("SELECT chips FROM users WHERE player_id = ?", playerID)
 	if err = row.Scan(&chips); err == sql.ErrNoRows {
+		// New user: start with 1000, then auto-grant 1 daily bonus
+		tx, err := DB.Begin()
+		if err != nil {
+			return 0, fmt.Errorf("create user tx begin: %w", err)
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+
 		chips = 1000
-		now := time.Now()
-		_, err = DB.Exec(
+		now := utcNow()
+
+		// Create user
+		_, err = tx.Exec(
 			"INSERT INTO users (player_id, name, chips, created_at) VALUES (?, ?, ?, ?)",
 			playerID, name, chips, now,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("create user: %w", err)
 		}
+
+		// Auto-grant 1 daily bonus (500 chips)
+		bonusAmount := 500
+		chips = 1000 + bonusAmount
+		_, err = tx.Exec("UPDATE users SET chips = ? WHERE player_id = ?", chips, playerID)
+		if err != nil {
+			return 0, fmt.Errorf("update user chips for bonus: %w", err)
+		}
+
+		// Record the bonus
+		_, err = tx.Exec(
+			"INSERT INTO daily_bonus (player_id, claimed_at, amount, bonus_type) VALUES (?, ?, ?, ?)",
+			playerID, now, bonusAmount, "signup",
+		)
+		if err != nil {
+			return 0, fmt.Errorf("create signup bonus: %w", err)
+		}
+
+		// Record transaction
+		_, err = tx.Exec(
+			"INSERT INTO transactions (player_id, type, amount, room_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+			playerID, "bonus", bonusAmount, "", "signup_bonus", now,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("create signup bonus tx: %w", err)
+		}
+
+		if err = tx.Commit(); err != nil {
+			return 0, fmt.Errorf("create user commit: %w", err)
+		}
+
 		return chips, nil
 	}
+
+	// User exists: update name if provided
+	if err == nil && name != "" {
+		_, err = DB.Exec("UPDATE users SET name = ? WHERE player_id = ?", name, playerID)
+		if err != nil {
+			return 0, fmt.Errorf("update user name: %w", err)
+		}
+	}
+
 	return chips, err
+}
+
+// GetUserProfile returns chips and name for a player
+func GetUserProfile(playerID string) (chips int, name string, err error) {
+	row := DB.QueryRow("SELECT chips, name FROM users WHERE player_id = ?", playerID)
+	if err = row.Scan(&chips, &name); err != nil {
+		return 0, "", err
+	}
+	return chips, name, nil
 }
 
 // UpdateUserChips sets the chip count for the given player.
@@ -127,12 +218,38 @@ func UpdateUserChips(playerID string, chips int) error {
 	return nil
 }
 
+// DeductUserChips 扣除玩家筹码（用于投注时）
+func DeductUserChips(playerID string, amount int) error {
+	res, err := DB.Exec("UPDATE users SET chips = chips - ? WHERE player_id = ?", amount, playerID)
+	if err != nil {
+		return fmt.Errorf("deduct chips: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("deduct chips: player %s not found", playerID)
+	}
+	return nil
+}
+
+// AddUserChips 增加玩家筹码（用于赢得奖池）
+func AddUserChips(playerID string, amount int) error {
+	res, err := DB.Exec("UPDATE users SET chips = chips + ? WHERE player_id = ?", amount, playerID)
+	if err != nil {
+		return fmt.Errorf("add chips: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("add chips: player %s not found", playerID)
+	}
+	return nil
+}
+
 // AddTransaction records a single transaction.
 // Valid txType values: "recharge", "win", "loss", "bot_replenish".
 func AddTransaction(playerID, txType string, amount int, roomID, detail string) error {
 	_, err := DB.Exec(
 		"INSERT INTO transactions (player_id, type, amount, room_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		playerID, txType, amount, roomID, detail, time.Now(),
+		playerID, txType, amount, roomID, detail, utcNow(),
 	)
 	if err != nil {
 		return fmt.Errorf("add transaction: %w", err)
@@ -164,7 +281,7 @@ func RechargeUser(playerID string, amount int) (newChips int, err error) {
 		return 0, fmt.Errorf("recharge update: %w", err)
 	}
 
-	now := time.Now()
+	now := utcNow()
 	if _, err = tx.Exec(
 		"INSERT INTO transactions (player_id, type, amount, room_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		playerID, "recharge", amount, "", "recharge", now,
@@ -183,10 +300,10 @@ func GetOrCreateUserWithWallet(playerID, name, walletAddress, walletChain string
 	row := DB.QueryRow("SELECT chips FROM users WHERE player_id = ?", playerID)
 	if err = row.Scan(&chips); err == sql.ErrNoRows {
 		chips = 1000
-		now := time.Now()
+		now := utcNow()
 		_, err = DB.Exec(
-			"INSERT INTO users (player_id, name, chips, wallet_address, wallet_chain, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			playerID, name, chips, walletAddress, walletChain, now,
+		"INSERT INTO users (player_id, name, chips, wallet_address, wallet_chain, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		playerID, name, chips, walletAddress, walletChain, now,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("create user with wallet: %w", err)
@@ -205,7 +322,7 @@ func GetOrCreateUserWithWallet(playerID, name, walletAddress, walletChain string
 func RecordRake(roomID, winnerID string, amount, players, baseBet int) error {
 	_, err := DB.Exec(
 		"INSERT INTO platform_fees (room_id, winner_id, amount, players, base_bet, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		roomID, winnerID, amount, players, baseBet, time.Now(),
+		roomID, winnerID, amount, players, baseBet, utcNow(),
 	)
 	if err != nil {
 		return fmt.Errorf("record rake: %w", err)
@@ -216,13 +333,31 @@ func RecordRake(roomID, winnerID string, amount, players, baseBet int) error {
 // GetDailyBonusInfo returns how many times the player has claimed the daily bonus today.
 func GetDailyBonusInfo(playerID string) (claimed int, err error) {
 	row := DB.QueryRow(
-		"SELECT COUNT(*) FROM daily_bonus WHERE player_id = ? AND DATE(claimed_at) = DATE('now')",
-		playerID,
+		"SELECT COUNT(*) FROM daily_bonus WHERE player_id = ? AND bonus_type = 'daily' AND DATE(claimed_at) = ?",
+		playerID, utcTodayString(),
 	)
 	if err = row.Scan(&claimed); err != nil {
 		return 0, fmt.Errorf("get daily bonus info: %w", err)
 	}
 	return claimed, nil
+}
+
+// GetDailyBonusStatus returns the current daily bonus status:
+// - claimed: number of times claimed today
+// - remaining: number of times still available today (max 3)
+// - canClaim: true if there are remaining claims available
+func GetDailyBonusStatus(playerID string) (claimed int, remaining int, canClaim bool, err error) {
+	const maxClaims = 3
+	row := DB.QueryRow(
+		"SELECT COUNT(*) FROM daily_bonus WHERE player_id = ? AND bonus_type = 'daily' AND DATE(claimed_at) = ?",
+		playerID, utcTodayString(),
+	)
+	if err = row.Scan(&claimed); err != nil {
+		return 0, 0, false, fmt.Errorf("get daily bonus status: %w", err)
+	}
+	remaining = maxClaims - claimed
+	canClaim = remaining > 0
+	return claimed, remaining, canClaim, nil
 }
 
 // ClaimDailyBonus grants 500 chips to the player if they have remaining claims today (max 3).
@@ -243,8 +378,8 @@ func ClaimDailyBonus(playerID string) (newChips int, remainingClaims int, err er
 
 	var claimed int
 	row := tx.QueryRow(
-		"SELECT COUNT(*) FROM daily_bonus WHERE player_id = ? AND DATE(claimed_at) = DATE('now')",
-		playerID,
+		"SELECT COUNT(*) FROM daily_bonus WHERE player_id = ? AND bonus_type = 'daily' AND DATE(claimed_at) = ?",
+		playerID, utcTodayString(),
 	)
 	if err = row.Scan(&claimed); err != nil {
 		return 0, 0, fmt.Errorf("bonus count query: %w", err)
@@ -255,10 +390,10 @@ func ClaimDailyBonus(playerID string) (newChips int, remainingClaims int, err er
 	}
 
 	// Insert bonus record
-	now := time.Now()
+	now := utcNow()
 	if _, err = tx.Exec(
-		"INSERT INTO daily_bonus (player_id, claimed_at, amount) VALUES (?, ?, ?)",
-		playerID, now, bonusAmount,
+		"INSERT INTO daily_bonus (player_id, claimed_at, amount, bonus_type) VALUES (?, ?, ?, ?)",
+		playerID, now, bonusAmount, "daily",
 	); err != nil {
 		return 0, 0, fmt.Errorf("bonus insert: %w", err)
 	}

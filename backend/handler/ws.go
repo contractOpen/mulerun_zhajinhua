@@ -1,31 +1,51 @@
 package handler
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"zhajinhua/game"
+
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		// Allow all origins for development
+		// TODO: In production, restrict to specific domains
+		return true
+	},
 }
 
 // Client WebSocket客户端
 type Client struct {
-	Conn     *websocket.Conn
-	PlayerID string
-	RoomID   string
-	Send     chan []byte
+	Conn          *websocket.Conn
+	PlayerID      string
+	RoomID        string
+	Authenticated bool // 是否完成认证
+	AuthWallet    string
+	AuthChain     WalletChain
+	AuthNonce     string
+	AuthExpiry    time.Time
+	Send          chan []byte
 }
+
+const authSessionTTL = 12 * time.Hour
+
+var authSessionSecret = []byte("mule-auth-session-secret")
 
 // MatchQueue 匹配队列
 type MatchQueue struct {
@@ -59,8 +79,12 @@ type JoinData struct {
 	PlayerName string `json:"playerName"`
 	BotCount   int    `json:"botCount"`
 	BaseBet    int    `json:"baseBet"`
-	Wallet     string `json:"wallet"`  // Web3钱包地址
-	Chain      string `json:"chain"`   // "evm", "ton", "sol"
+	Wallet     string `json:"wallet"` // Web3钱包地址
+	Chain      string `json:"chain"`  // "evm", "ton", "sol"
+}
+
+type BaseBetData struct {
+	BaseBet int `json:"baseBet"`
 }
 
 type ActionData struct {
@@ -89,26 +113,23 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	playerID := fmt.Sprintf("player_%d", time.Now().UnixNano())
+	connID := fmt.Sprintf("conn_%d", time.Now().UnixNano())
 	client := &Client{
-		Conn:     conn,
-		PlayerID: playerID,
-		Send:     make(chan []byte, 256),
+		Conn:          conn,
+		PlayerID:      "", // Not set until authenticated
+		Authenticated: false,
+		Send:          make(chan []byte, 256),
 	}
 
 	hub.mu.Lock()
-	hub.Clients[playerID] = client
+	hub.Clients[connID] = client
 	hub.mu.Unlock()
-
-	// Load chips from DB
-	chips, _ := game.GetOrCreateUser(playerID, "")
 
 	sendToClient(client, map[string]interface{}{
 		"type": "connected",
 		"data": map[string]interface{}{
-			"playerId": playerID,
-			"chips":    chips,
-			"mode":     string(Mode),
+			"message": "Please authenticate with your wallet",
+			"mode":    string(Mode),
 		},
 	})
 
@@ -116,16 +137,42 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go clientReader(client)
 }
 
+func init() {
+	if secret := os.Getenv("AUTH_SESSION_SECRET"); secret != "" {
+		authSessionSecret = []byte(secret)
+	}
+}
+
 func clientWriter(c *Client) {
-	defer c.Conn.Close()
-	for msg := range c.Send {
-		if err := c.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			break
+	ticker := time.NewTicker(30 * time.Second)
+	defer func() {
+		ticker.Stop()
+		c.Conn.Close()
+	}()
+
+	for {
+		select {
+		case msg := <-c.Send:
+			if err := c.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return
+			}
+		case <-ticker.C:
+			// Send ping to detect stale connections
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
 
 func clientReader(c *Client) {
+	// Set read deadline to detect stale connections (pong timeout)
+	c.Conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		return nil
+	})
+
 	defer func() {
 		// 从匹配队列移除
 		hub.MatchQueue.mu.Lock()
@@ -146,40 +193,45 @@ func clientReader(c *Client) {
 			room, ok := hub.Rooms[c.RoomID]
 			hub.mu.RUnlock()
 			if ok {
-				wasTurn := room.HandlePlayerLeave(c.PlayerID)
+				player := room.FindPlayer(c.PlayerID)
+				spectator := room.FindSpectator(c.PlayerID)
+				if spectator != nil {
+					room.HandlePlayerLeave(c.PlayerID)
+					broadcastRoomState(room)
+				} else if player != nil && player.State != game.PlayerFolded {
+					wasTurn := room.HandlePlayerLeave(c.PlayerID)
 
-				if room.State == game.RoomPlaying {
-					if room.CheckAllInResolution() {
-						winner := room.ResolveAllIn()
-						rake := room.EndGame(winner)
-						settleGameToDB(room, winner, rake)
-						cancelTurnTimer(room.ID)
-						broadcastGameEnd(room, winner, rake)
-					} else {
-						ended, winner := room.CheckGameEnd()
-						if ended {
+					if room.State == game.RoomPlaying {
+						if room.CheckAllInResolution() {
+							winner := room.ResolveAllIn()
 							rake := room.EndGame(winner)
 							settleGameToDB(room, winner, rake)
 							cancelTurnTimer(room.ID)
 							broadcastGameEnd(room, winner, rake)
-						} else if wasTurn {
-							room.NextTurn()
-							broadcastRoomState(room)
-							startTurnTimer(room)
-							go processBotTurns(room)
 						} else {
-							broadcastRoomState(room)
+							ended, winner := room.CheckGameEnd()
+							if ended {
+								rake := room.EndGame(winner)
+								settleGameToDB(room, winner, rake)
+								cancelTurnTimer(room.ID)
+								broadcastGameEnd(room, winner, rake)
+							} else if wasTurn {
+								room.NextTurn()
+								broadcastRoomState(room)
+								startTurnTimer(room)
+								go processBotTurns(room)
+							} else {
+								broadcastRoomState(room)
+							}
 						}
+					} else {
+						broadcastRoomState(room)
 					}
-				} else {
-					broadcastRoomState(room)
-				}
 
-				// Clean up empty rooms
-				if len(room.Players) == 0 {
-					hub.mu.Lock()
-					delete(hub.Rooms, c.RoomID)
-					hub.mu.Unlock()
+					// Close rooms that no longer have enough players to continue.
+					if closeRoomIfInsufficientPlayers(room, "房间人数不足，房间已自动关闭") {
+						return
+					}
 				}
 			}
 		}
@@ -192,6 +244,9 @@ func clientReader(c *Client) {
 		if err != nil {
 			break
 		}
+		// Reset read deadline on successful message read
+		c.Conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+
 		var msg Message
 		if err := json.Unmarshal(msgBytes, &msg); err != nil {
 			continue
@@ -200,14 +255,242 @@ func clientReader(c *Client) {
 	}
 }
 
+// LoginData 登录请求
+type LoginData struct {
+	Wallet       string `json:"wallet"`     // 钱包地址（PE）或临时ID（TE）
+	Chain        string `json:"chain"`      // "evm", "ton", "sol"（可选）
+	PlayerName   string `json:"playerName"` // 用户自定义昵称
+	Nonce        string `json:"nonce"`
+	Signature    string `json:"signature"`
+	SessionToken string `json:"sessionToken"`
+}
+
+type AuthChallengeRequestData struct {
+	Wallet string `json:"wallet"`
+	Chain  string `json:"chain"`
+}
+
+func buildAuthSessionToken(playerID string, chain WalletChain, expiresAt time.Time) string {
+	payload := fmt.Sprintf("%s|%s|%d", playerID, chain, expiresAt.Unix())
+	mac := hmac.New(sha256.New, authSessionSecret)
+	mac.Write([]byte(payload))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload + "|" + signature))
+}
+
+func validateAuthSessionToken(token string, expectedPlayerID string, expectedChain WalletChain) (time.Time, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid session token")
+	}
+
+	parts := strings.Split(string(raw), "|")
+	if len(parts) != 4 {
+		return time.Time{}, fmt.Errorf("invalid session token payload")
+	}
+	playerID := parts[0]
+	chain := parts[1]
+	expiresUnix, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid session token expiry")
+	}
+	signature := parts[3]
+
+	if playerID != expectedPlayerID || chain != string(expectedChain) {
+		return time.Time{}, fmt.Errorf("session token wallet mismatch")
+	}
+
+	expiresAt := time.Unix(expiresUnix, 0)
+	if time.Now().After(expiresAt) {
+		return time.Time{}, fmt.Errorf("session token expired")
+	}
+
+	payload := fmt.Sprintf("%s|%s|%d", playerID, chain, expiresUnix)
+	mac := hmac.New(sha256.New, authSessionSecret)
+	mac.Write([]byte(payload))
+	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
+		return time.Time{}, fmt.Errorf("invalid session token signature")
+	}
+
+	return expiresAt, nil
+}
+
+// handleLogin 处理用户认证
+func handleLogin(c *Client, data json.RawMessage) {
+	var req LoginData
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid login data"},
+		})
+		return
+	}
+
+	// PE mode: require valid wallet address
+	var sessionChain WalletChain
+	if Mode == ModePE {
+		if req.Wallet == "" {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": "wallet address required in PE mode"},
+			})
+			return
+		}
+		chain := WalletChain(req.Chain)
+		if chain == "" {
+			chain = DetectChain(req.Wallet)
+		}
+		sessionChain = chain
+		if !ValidateWalletAddress(req.Wallet, chain) {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": "invalid wallet address"},
+			})
+			return
+		}
+
+		if chain == ChainEVM || chain == ChainSOL {
+			if req.SessionToken != "" {
+				if _, err := validateAuthSessionToken(req.SessionToken, req.Wallet, chain); err == nil {
+					c.AuthNonce = ""
+				} else {
+					sendToClient(c, map[string]interface{}{
+						"type": "session_expired",
+						"data": map[string]string{"message": "登录状态已过期，请重新授权"},
+					})
+					return
+				}
+			} else {
+				if req.Nonce == "" || req.Signature == "" {
+					sendToClient(c, map[string]interface{}{
+						"type": "error",
+						"data": map[string]string{"message": "wallet signature required"},
+					})
+					return
+				}
+				if c.AuthNonce == "" || c.AuthNonce != req.Nonce || c.AuthWallet != req.Wallet || c.AuthChain != chain {
+					sendToClient(c, map[string]interface{}{
+						"type": "error",
+						"data": map[string]string{"message": "invalid or expired auth challenge"},
+					})
+					return
+				}
+				if time.Now().After(c.AuthExpiry) {
+					c.AuthNonce = ""
+					sendToClient(c, map[string]interface{}{
+						"type": "error",
+						"data": map[string]string{"message": "auth challenge expired"},
+					})
+					return
+				}
+
+				message := BuildAuthMessage(req.Wallet, chain, req.Nonce)
+				if err := VerifyWalletSignature(req.Wallet, chain, message, req.Signature); err != nil {
+					sendToClient(c, map[string]interface{}{
+						"type": "error",
+						"data": map[string]string{"message": "invalid wallet signature"},
+					})
+					return
+				}
+				c.AuthNonce = ""
+			}
+		}
+		// Use wallet address as playerID in PE mode
+		c.PlayerID = req.Wallet
+	} else {
+		// TE mode: use provided ID or generate temporary one
+		if req.Wallet != "" {
+			c.PlayerID = req.Wallet
+		} else {
+			c.PlayerID = fmt.Sprintf("te_player_%d", time.Now().UnixNano())
+		}
+	}
+
+	// Use provided player name or default
+	playerName := req.PlayerName
+	if playerName == "" {
+		playerName = "玩家"
+	}
+
+	// Create or get user from DB
+	chips, _ := game.GetOrCreateUser(c.PlayerID, playerName)
+
+	// Get the actual stored player name from DB
+	storedChips, storedName, err := game.GetUserProfile(c.PlayerID)
+	if err == nil {
+		chips = storedChips
+		if storedName != "" {
+			playerName = storedName
+		}
+	}
+
+	// If wallet provided in PE mode, save wallet info
+	if Mode == ModePE && req.Wallet != "" {
+		chain := WalletChain(req.Chain)
+		if chain == "" {
+			chain = DetectChain(req.Wallet)
+		}
+		game.GetOrCreateUserWithWallet(c.PlayerID, playerName, req.Wallet, string(chain))
+	}
+
+	// Mark as authenticated
+	c.Authenticated = true
+	c.AuthWallet = ""
+	c.AuthChain = ""
+	c.AuthNonce = ""
+	c.AuthExpiry = time.Time{}
+
+	// Update hub clients map to use playerID as key
+	hub.mu.Lock()
+	// Find and remove old connection entry
+	for key, client := range hub.Clients {
+		if client == c {
+			delete(hub.Clients, key)
+			break
+		}
+	}
+	// Add with new playerID
+	hub.Clients[c.PlayerID] = c
+	hub.mu.Unlock()
+
+	sendToClient(c, map[string]interface{}{
+		"type": "authenticated",
+		"data": map[string]interface{}{
+			"playerId":         c.PlayerID,
+			"playerName":       playerName, // NEW: return saved player name
+			"chips":            chips,
+			"mode":             string(Mode),
+			"chain":            string(sessionChain),
+			"sessionToken":     buildAuthSessionToken(c.PlayerID, sessionChain, time.Now().Add(authSessionTTL)),
+			"sessionExpiresAt": time.Now().Add(authSessionTTL).UnixMilli(),
+		},
+	})
+}
+
 func handleMessage(c *Client, msg Message) {
+	// 大部分操作需要认证，除了login/auth
+	if !c.Authenticated && msg.Type != "login" && msg.Type != "auth" && msg.Type != "auth_challenge_request" {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "not authenticated"},
+		})
+		return
+	}
+
 	switch msg.Type {
+	case "login", "auth":
+		handleLogin(c, msg.Data)
+	case "auth_challenge_request":
+		handleAuthChallengeRequest(c, msg.Data)
 	case "create_room":
 		handleCreateRoom(c, msg.Data)
 	case "join_room":
 		handleJoinRoom(c, msg.Data)
 	case "ready":
 		handleReady(c)
+	case "update_base_bet":
+		handleUpdateBaseBet(c, msg.Data)
 	case "start_game":
 		handleStartGame(c)
 	case "action":
@@ -226,14 +509,85 @@ func handleMessage(c *Client, msg Message) {
 		handleLeaveRoom(c)
 	case "claim_bonus":
 		handleClaimBonus(c)
+	case "check_bonus":
+		handleCheckBonus(c)
 	case "verify_recharge":
 		handleVerifyRecharge(c, msg.Data)
 	}
 }
 
+func handleAuthChallengeRequest(c *Client, data json.RawMessage) {
+	var req AuthChallengeRequestData
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid auth challenge request"},
+		})
+		return
+	}
+
+	if Mode != ModePE {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "auth challenge is only required in PE mode"},
+		})
+		return
+	}
+
+	chain := WalletChain(req.Chain)
+	if chain == "" {
+		chain = DetectChain(req.Wallet)
+	}
+	if !ValidateWalletAddress(req.Wallet, chain) {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid wallet address"},
+		})
+		return
+	}
+	if chain != ChainEVM && chain != ChainSOL {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "auth challenge is currently supported for EVM and SOL only"},
+		})
+		return
+	}
+
+	nonce, err := GenerateAuthNonce()
+	if err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "failed to generate auth challenge"},
+		})
+		return
+	}
+
+	c.AuthWallet = req.Wallet
+	c.AuthChain = chain
+	c.AuthNonce = nonce
+	c.AuthExpiry = time.Now().Add(AuthChallengeTTLSeconds * time.Second)
+
+	sendToClient(c, map[string]interface{}{
+		"type": "auth_challenge",
+		"data": map[string]interface{}{
+			"wallet":    req.Wallet,
+			"chain":     chain,
+			"nonce":     nonce,
+			"message":   BuildAuthMessage(req.Wallet, chain, nonce),
+			"expiresIn": AuthChallengeTTLSeconds,
+		},
+	})
+}
+
 func handleCreateRoom(c *Client, data json.RawMessage) {
 	var req JoinData
-	json.Unmarshal(data, &req)
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
 
 	if req.PlayerName == "" {
 		req.PlayerName = "玩家"
@@ -257,6 +611,8 @@ func handleCreateRoom(c *Client, data json.RawMessage) {
 	roomID := fmt.Sprintf("room_%d", time.Now().UnixNano())
 	room := game.NewRoom(roomID, 6)
 	room.RoomCode = generateRoomCode(6)
+	room.OwnerID = c.PlayerID
+	room.IsPrivate = req.BotCount == 0
 
 	// 设置底分
 	if req.BaseBet > 0 {
@@ -299,7 +655,13 @@ func handleCreateRoom(c *Client, data json.RawMessage) {
 
 func handleJoinRoom(c *Client, data json.RawMessage) {
 	var req JoinData
-	json.Unmarshal(data, &req)
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
 
 	hub.mu.RLock()
 	room, ok := hub.Rooms[req.RoomID]
@@ -334,7 +696,15 @@ func handleJoinRoom(c *Client, data json.RawMessage) {
 	player := game.NewPlayer(c.PlayerID, req.PlayerName, 0)
 	chips, _ := game.GetOrCreateUser(c.PlayerID, req.PlayerName)
 	player.Chips = chips
-	if err := room.AddPlayer(player); err != nil {
+	if room.State == game.RoomPlaying {
+		if err := room.AddSpectator(player); err != nil {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": err.Error()},
+			})
+			return
+		}
+	} else if err := room.AddPlayer(player); err != nil {
 		sendToClient(c, map[string]interface{}{
 			"type": "error",
 			"data": map[string]string{"message": err.Error()},
@@ -343,6 +713,49 @@ func handleJoinRoom(c *Client, data json.RawMessage) {
 	}
 
 	c.RoomID = req.RoomID
+	broadcastRoomState(room)
+}
+
+func handleUpdateBaseBet(c *Client, data json.RawMessage) {
+	var req BaseBetData
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
+	if req.BaseBet <= 0 {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "底注必须大于 0"},
+		})
+		return
+	}
+
+	hub.mu.RLock()
+	room, ok := hub.Rooms[c.RoomID]
+	hub.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if room.OwnerID != c.PlayerID {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "只有房主可以修改底注"},
+		})
+		return
+	}
+	if room.State == game.RoomPlaying {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "游戏进行中不能修改底注"},
+		})
+		return
+	}
+
+	room.BaseBet = req.BaseBet
+	room.CurrentBet = req.BaseBet
 	broadcastRoomState(room)
 }
 
@@ -368,6 +781,23 @@ func handleStartGame(c *Client) {
 		return
 	}
 
+	// Safeguard: verify player is still in room
+	player := room.FindPlayer(c.PlayerID)
+	if player == nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "You are not in this room"},
+		})
+		return
+	}
+	if room.IsPrivate && room.OwnerID != c.PlayerID {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "只有房主可以开始私有房游戏"},
+		})
+		return
+	}
+
 	if err := room.StartGame(); err != nil {
 		sendToClient(c, map[string]interface{}{
 			"type": "error",
@@ -375,6 +805,7 @@ func handleStartGame(c *Client) {
 		})
 		return
 	}
+	syncRoomAntesToDB(room)
 
 	broadcastRoomState(room)
 	startTurnTimer(room)
@@ -383,12 +814,28 @@ func handleStartGame(c *Client) {
 
 func handleAction(c *Client, data json.RawMessage) {
 	var req ActionData
-	json.Unmarshal(data, &req)
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
 
 	hub.mu.RLock()
 	room, ok := hub.Rooms[c.RoomID]
 	hub.mu.RUnlock()
 	if !ok {
+		return
+	}
+
+	// Safeguard: verify player is still in room
+	player := room.FindPlayer(c.PlayerID)
+	if player == nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "You are not in this room"},
+		})
 		return
 	}
 
@@ -405,6 +852,16 @@ func handleAction(c *Client, data json.RawMessage) {
 			"data": map[string]string{"message": err.Error()},
 		})
 		return
+	}
+
+	// NEW: Deduct from DB immediately for betting actions
+	// Calculate how much was actually deducted from player's room chips
+	if action.Type == game.ActionCall || action.Type == game.ActionRaise ||
+		action.Type == game.ActionAllIn || action.Type == game.ActionCompare {
+		if event != nil && event.Amount > 0 {
+			// Deduct from DB account
+			game.DeductUserChips(c.PlayerID, event.Amount)
+		}
 	}
 
 	broadcastEvent(room, event)
@@ -447,21 +904,27 @@ func handleNewRound(c *Client) {
 		return
 	}
 
-	// 检查发起者是否破产
+	// Safeguard: verify player is still in room
 	player := room.FindPlayer(c.PlayerID)
-	if player != nil {
-		// Check DB chips too
-		dbChips, _ := game.GetOrCreateUser(c.PlayerID, "")
-		if dbChips <= 0 {
-			sendToClient(c, map[string]interface{}{
-				"type": "bankrupt",
-				"data": map[string]interface{}{
-					"message": "筹码不足，请充值",
-					"chips":   0,
-				},
-			})
-			return
-		}
+	if player == nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "You are not in this room"},
+		})
+		return
+	}
+
+	// Check bankrupt status
+	dbChips, _ := game.GetOrCreateUser(c.PlayerID, "")
+	if dbChips <= 0 {
+		sendToClient(c, map[string]interface{}{
+			"type": "bankrupt",
+			"data": map[string]interface{}{
+				"message": "筹码不足，请充值",
+				"chips":   0,
+			},
+		})
+		return
 	}
 
 	// Mark player as confirmed for next round
@@ -494,10 +957,17 @@ func startNextRoundCountdown(room *game.Room) {
 			return
 		}
 
-		// Kick unconfirmed players
+		// Remove all unconfirmed human players before the next round starts.
+		// At this point the previous hand is already settled, so keeping them
+		// in the room would resurrect stale/folded players in the next round.
 		unconfirmed := r.UnconfirmedPlayers()
 		for _, pid := range unconfirmed {
-			r.HandlePlayerLeave(pid)
+			player := r.FindPlayer(pid)
+			if player == nil {
+				continue
+			}
+
+			r.RemovePlayer(pid)
 			hub.mu.RLock()
 			if client, ok := hub.Clients[pid]; ok {
 				client.RoomID = ""
@@ -515,7 +985,7 @@ func startNextRoundCountdown(room *game.Room) {
 		if len(r.Players) >= 2 {
 			startNextRound(r)
 		} else {
-			broadcastRoomState(r)
+			closeRoomIfInsufficientPlayers(r, "房间人数不足，房间已自动关闭")
 		}
 	}()
 }
@@ -533,14 +1003,73 @@ func startNextRound(room *game.Room) {
 			}
 		}
 	}
+	for _, spectator := range room.Spectators {
+		if spectator == nil {
+			continue
+		}
+		spectator.State = game.PlayerWaiting
+		spectator.BetTotal = 0
+		spectator.Looked = false
+		spectator.Hand = game.Hand{}
+	}
 
 	if err := room.StartGame(); err != nil {
 		return
 	}
+	syncRoomAntesToDB(room)
 
 	broadcastRoomState(room)
 	startTurnTimer(room)
 	go processBotTurns(room)
+}
+
+func closeRoomIfInsufficientPlayers(room *game.Room, message string) bool {
+	if len(room.Players) >= 2 {
+		return false
+	}
+
+	cancelTurnTimer(room.ID)
+
+	hub.mu.RLock()
+	for _, player := range room.Players {
+		if client, ok := hub.Clients[player.ID]; ok {
+			client.RoomID = ""
+			sendToClient(client, map[string]interface{}{
+				"type": "kicked",
+				"data": map[string]interface{}{
+					"message": message,
+				},
+			})
+		}
+	}
+	for _, spectator := range room.Spectators {
+		if client, ok := hub.Clients[spectator.ID]; ok {
+			client.RoomID = ""
+			sendToClient(client, map[string]interface{}{
+				"type": "kicked",
+				"data": map[string]interface{}{
+					"message": message,
+				},
+			})
+		}
+	}
+	hub.mu.RUnlock()
+
+	hub.mu.Lock()
+	delete(hub.Rooms, room.ID)
+	hub.mu.Unlock()
+	return true
+}
+
+func destroyRoomIfAbandoned(room *game.Room) bool {
+	if len(room.Players) > 0 || len(room.Spectators) > 0 {
+		return false
+	}
+	cancelTurnTimer(room.ID)
+	hub.mu.Lock()
+	delete(hub.Rooms, room.ID)
+	hub.mu.Unlock()
+	return true
 }
 
 // broadcastNextRoundStatus broadcasts confirmation status to all players in the room
@@ -550,6 +1079,24 @@ func broadcastNextRoundStatus(room *game.Room) {
 	info := room.GetRoomInfo("")
 	for _, p := range room.Players {
 		if client, ok := hub.Clients[p.ID]; ok {
+			// Safeguard: only broadcast to players still connected to this room
+			if client.RoomID != room.ID {
+				continue
+			}
+			sendToClient(client, map[string]interface{}{
+				"type": "next_round_status",
+				"data": map[string]interface{}{
+					"readyForNext":      info["readyForNext"],
+					"nextRoundDeadline": info["nextRoundDeadline"],
+				},
+			})
+		}
+	}
+	for _, p := range room.Spectators {
+		if client, ok := hub.Clients[p.ID]; ok {
+			if client.RoomID != room.ID {
+				continue
+			}
 			sendToClient(client, map[string]interface{}{
 				"type": "next_round_status",
 				"data": map[string]interface{}{
@@ -563,24 +1110,40 @@ func broadcastNextRoundStatus(room *game.Room) {
 
 // handleLeaveRoom handles a player leaving the room
 func handleLeaveRoom(c *Client) {
+	// Atomically clear room association to prevent race conditions
+	hub.mu.Lock()
+	roomID := c.RoomID
+	c.RoomID = ""
+	hub.mu.Unlock()
+
+	if roomID == "" {
+		return
+	}
+
 	hub.mu.RLock()
-	room, ok := hub.Rooms[c.RoomID]
+	room, ok := hub.Rooms[roomID]
 	hub.mu.RUnlock()
 	if !ok {
 		return
 	}
 
 	wasTurn := room.HandlePlayerLeave(c.PlayerID)
-	roomID := c.RoomID
-	c.RoomID = ""
 
-	// Send updated chips to leaving player
-	dbChips, _ := game.GetOrCreateUser(c.PlayerID, "")
+	// Send current chips to leaving player
+	// Use the actual chips value from the room, not stale DB value
+	player := room.FindPlayer(c.PlayerID)
+	var currentChips int
+	if player != nil {
+		currentChips = player.Chips // Use real-time room chips
+	} else {
+		currentChips, _ = game.GetOrCreateUser(c.PlayerID, "") // Fallback to DB
+	}
+
 	sendToClient(c, map[string]interface{}{
 		"type": "left_room",
 		"data": map[string]interface{}{
 			"message": "已离开房间",
-			"chips":   dbChips,
+			"chips":   currentChips,
 		},
 	})
 
@@ -592,6 +1155,7 @@ func handleLeaveRoom(c *Client) {
 			rake := room.EndGame(winner)
 			settleGameToDB(room, winner, rake)
 			cancelTurnTimer(room.ID)
+			room.RemovePlayer(c.PlayerID)
 			broadcastGameEnd(room, winner, rake)
 			return
 		}
@@ -601,6 +1165,7 @@ func handleLeaveRoom(c *Client) {
 			rake := room.EndGame(winner)
 			settleGameToDB(room, winner, rake)
 			cancelTurnTimer(room.ID)
+			room.RemovePlayer(c.PlayerID)
 			broadcastGameEnd(room, winner, rake)
 			return
 		}
@@ -617,18 +1182,51 @@ func handleLeaveRoom(c *Client) {
 	}
 
 	// Clean up empty rooms
-	if len(room.Players) == 0 {
-		hub.mu.Lock()
-		delete(hub.Rooms, roomID)
-		hub.mu.Unlock()
+	if destroyRoomIfAbandoned(room) {
+		return
+	}
+	if closeRoomIfInsufficientPlayers(room, "房间人数不足，房间已自动关闭") {
 		return
 	}
 
 	broadcastRoomState(room)
+	if room.State == game.RoomFinished {
+		broadcastNextRoundStatus(room)
+	}
 }
 
 // handleClaimBonus handles daily free bonus claims (3x per day, 500 chips each)
+// After 3 claims, users must recharge via smart contracts
 func handleClaimBonus(c *Client) {
+	// Check current bonus status first
+	claimed, remaining, canClaim, err := game.GetDailyBonusStatus(c.PlayerID)
+	if err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "failed to check bonus status: " + err.Error()},
+		})
+		return
+	}
+
+	// Return status even if can't claim (for UI to show recharge button)
+	statusResp := map[string]interface{}{
+		"type": "bonus_status",
+		"data": map[string]interface{}{
+			"claimed":   claimed,
+			"remaining": remaining,
+			"canClaim":  canClaim,
+			"amount":    500,
+		},
+	}
+
+	// If no remaining claims, prompt for recharge instead of claiming
+	if !canClaim {
+		statusResp["data"].(map[string]interface{})["message"] = "daily free bonus exhausted, please recharge"
+		sendToClient(c, statusResp)
+		return
+	}
+
+	// Claim the bonus
 	newChips, remainingClaims, err := game.ClaimDailyBonus(c.PlayerID)
 	if err != nil {
 		sendToClient(c, map[string]interface{}{
@@ -645,6 +1243,35 @@ func handleClaimBonus(c *Client) {
 			"remainingClaims": remainingClaims,
 			"amount":          500,
 		},
+	})
+}
+
+// handleCheckBonus checks the current daily bonus status without claiming
+func handleCheckBonus(c *Client) {
+	claimed, remaining, canClaim, err := game.GetDailyBonusStatus(c.PlayerID)
+	if err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "failed to check bonus status: " + err.Error()},
+		})
+		return
+	}
+
+	respData := map[string]interface{}{
+		"claimed":   claimed,
+		"remaining": remaining,
+		"canClaim":  canClaim,
+		"amount":    500,
+	}
+
+	// If no remaining claims, include recharge message
+	if !canClaim {
+		respData["message"] = "daily free bonus exhausted, please recharge"
+	}
+
+	sendToClient(c, map[string]interface{}{
+		"type": "bonus_status",
+		"data": respData,
 	})
 }
 
@@ -705,99 +1332,139 @@ func handleVerifyRecharge(c *Client, data json.RawMessage) {
 // handleMatch 匹配对战
 func handleMatch(c *Client, data json.RawMessage) {
 	var req JoinData
-	json.Unmarshal(data, &req)
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
 
 	if req.PlayerName == "" {
 		req.PlayerName = "玩家"
 	}
+	if req.BaseBet <= 0 {
+		req.BaseBet = 10
+	}
 
-	hub.MatchQueue.mu.Lock()
-	defer hub.MatchQueue.mu.Unlock()
+	hub.mu.Lock()
+	var room *game.Room
+	var roomID string
+	for id, existing := range hub.Rooms {
+		if existing.IsMatch && existing.BaseBet == req.BaseBet && existing.State == game.RoomWaiting && len(existing.Players) < 2 {
+			room = existing
+			roomID = id
+			break
+		}
+	}
+	if room == nil {
+		for id, existing := range hub.Rooms {
+			if existing.IsMatch && existing.BaseBet == req.BaseBet && existing.State == game.RoomPlaying {
+				room = existing
+				roomID = id
+				break
+			}
+		}
+	}
+	if room == nil {
+		roomID = fmt.Sprintf("match_%d", time.Now().UnixNano())
+		room = game.NewRoom(roomID, 2)
+		room.IsMatch = true
+		room.OwnerID = c.PlayerID
+		room.BaseBet = req.BaseBet
+		room.CurrentBet = req.BaseBet
+		hub.Rooms[roomID] = room
+	}
+	hub.mu.Unlock()
 
-	// 检查是否已在队列
-	for _, mc := range hub.MatchQueue.clients {
-		if mc.PlayerID == c.PlayerID {
+	name := "玩家"
+	if _, storedName, err := game.GetUserProfile(c.PlayerID); err == nil && storedName != "" {
+		name = storedName
+	}
+	chips, err := game.GetOrCreateUser(c.PlayerID, name)
+	if err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "读取玩家筹码失败"},
+		})
+		return
+	}
+
+	player := game.NewPlayer(c.PlayerID, name, 0)
+	player.Chips = chips
+	if room.State == game.RoomPlaying {
+		if err := room.AddSpectator(player); err != nil {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": err.Error()},
+			})
 			return
 		}
-	}
-
-	hub.MatchQueue.clients = append(hub.MatchQueue.clients, c)
-
-	sendToClient(c, map[string]interface{}{
-		"type": "match_status",
-		"data": map[string]interface{}{
-			"status":  "matching",
-			"players": len(hub.MatchQueue.clients),
-		},
-	})
-
-	// 广播匹配人数
-	for _, mc := range hub.MatchQueue.clients {
-		if mc.PlayerID != c.PlayerID {
-			sendToClient(mc, map[string]interface{}{
-				"type": "match_status",
-				"data": map[string]interface{}{
-					"status":  "matching",
-					"players": len(hub.MatchQueue.clients),
-				},
+	} else {
+		player.State = game.PlayerReady
+		if err := room.AddPlayer(player); err != nil {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": err.Error()},
 			})
+			return
 		}
+		player.Avatar = player.Seat%2 + 1
+	}
+	c.RoomID = roomID
+
+	if room.State == game.RoomPlaying {
+		sendToClient(c, map[string]interface{}{
+			"type": "match_found",
+			"data": room.GetRoomInfo(c.PlayerID),
+		})
+		return
 	}
 
-	// 达到2人以上开始匹配
-	if len(hub.MatchQueue.clients) >= 2 {
-		matched := hub.MatchQueue.clients[:2]
-		hub.MatchQueue.clients = hub.MatchQueue.clients[2:]
+	if len(room.Players) < 2 {
+		sendToClient(c, map[string]interface{}{
+			"type": "match_status",
+			"data": map[string]interface{}{
+				"status":  "matching",
+				"players": len(room.Players),
+			},
+		})
+		return
+	}
 
-		// 创建房间
-		roomID := fmt.Sprintf("match_%d", time.Now().UnixNano())
-		room := game.NewRoom(roomID, 6)
-
-		for i, mc := range matched {
-			name := req.PlayerName
-			if i > 0 {
-				name = "对手" // 简化处理
-			}
-			player := game.NewPlayer(mc.PlayerID, name, i)
-			player.State = game.PlayerReady
-			room.AddPlayer(player)
-			mc.RoomID = roomID
-		}
-
-		// 加几个机器人凑热闹
-		room.FillBots(1)
-
-		hub.mu.Lock()
-		hub.Rooms[roomID] = room
-		hub.mu.Unlock()
-
-		// 通知匹配成功
-		for _, mc := range matched {
-			sendToClient(mc, map[string]interface{}{
+	for _, matchedPlayer := range room.Players {
+		if client, ok := hub.Clients[matchedPlayer.ID]; ok {
+			client.RoomID = roomID
+			sendToClient(client, map[string]interface{}{
 				"type": "match_found",
-				"data": room.GetRoomInfo(mc.PlayerID),
+				"data": room.GetRoomInfo(matchedPlayer.ID),
 			})
 		}
-
-		// 自动开始游戏
-		go func() {
-			time.Sleep(2 * time.Second)
-			if err := room.StartGame(); err == nil {
-				broadcastRoomState(room)
-				startTurnTimer(room)
-				go processBotTurns(room)
-			}
-		}()
 	}
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		if err := room.StartGame(); err == nil {
+			syncRoomAntesToDB(room)
+			broadcastRoomState(room)
+			startTurnTimer(room)
+		}
+	}()
 }
 
 func handleCancelMatch(c *Client) {
-	hub.MatchQueue.mu.Lock()
-	defer hub.MatchQueue.mu.Unlock()
-	for i, mc := range hub.MatchQueue.clients {
-		if mc.PlayerID == c.PlayerID {
-			hub.MatchQueue.clients = append(hub.MatchQueue.clients[:i], hub.MatchQueue.clients[i+1:]...)
-			break
+	if c.RoomID != "" {
+		hub.mu.RLock()
+		room, ok := hub.Rooms[c.RoomID]
+		hub.mu.RUnlock()
+		if ok && room.IsMatch && room.State == game.RoomWaiting {
+			room.RemovePlayer(c.PlayerID)
+			hub.mu.Lock()
+			if len(room.Players) == 0 {
+				delete(hub.Rooms, room.ID)
+			}
+			hub.mu.Unlock()
+			c.RoomID = ""
 		}
 	}
 	sendToClient(c, map[string]interface{}{
@@ -811,36 +1478,76 @@ func handleCancelMatch(c *Client) {
 // handleRecharge 模拟充值
 func handleRecharge(c *Client, data json.RawMessage) {
 	var req RechargeData
-	json.Unmarshal(data, &req)
-
-	// Recharge in DB
-	newChips, _ := game.RechargeUser(c.PlayerID, req.Amount)
-
-	// Update player chips in room from DB
-	hub.mu.RLock()
-	room, ok := hub.Rooms[c.RoomID]
-	hub.mu.RUnlock()
-
-	if ok {
-		player := room.FindPlayer(c.PlayerID)
-		if player != nil {
-			dbChips, err := game.GetOrCreateUser(c.PlayerID, "")
-			if err == nil {
-				player.Chips = dbChips
-			} else {
-				player.Chips += req.Amount
-			}
-		}
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
 	}
 
-	sendToClient(c, map[string]interface{}{
-		"type": "recharge_success",
-		"data": map[string]interface{}{
-			"amount":   req.Amount,
-			"wallet":   req.Wallet,
-			"newChips": newChips,
-		},
-	})
+	_, remaining, canClaim, err := game.GetDailyBonusStatus(c.PlayerID)
+	if err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "failed to check daily bonus status"},
+		})
+		return
+	}
+
+	if canClaim {
+		if req.Amount != 500 {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": "有剩余赠送次数时，每次只能领取 500"},
+			})
+			return
+		}
+
+		newChips, remainingClaims, err := game.ClaimDailyBonus(c.PlayerID)
+		if err != nil {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": "领取赠送失败: " + err.Error()},
+			})
+			return
+		}
+
+		// Update player chips in room from DB
+		hub.mu.RLock()
+		room, ok := hub.Rooms[c.RoomID]
+		hub.mu.RUnlock()
+		if ok {
+			if player := room.FindPlayer(c.PlayerID); player != nil {
+				player.Chips = newChips
+			}
+		}
+
+		sendToClient(c, map[string]interface{}{
+			"type": "recharge_success",
+			"data": map[string]interface{}{
+				"amount":          500,
+				"wallet":          req.Wallet,
+				"newChips":        newChips,
+				"remainingClaims": remainingClaims,
+				"usedDailyBonus":  true,
+			},
+		})
+		return
+	}
+
+	if remaining == 0 {
+		// User has claimed all 3 free bonuses today
+		// Contract-based recharge is not yet configured
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{
+				"message": "Smart contract for recharge is not yet configured. Please try again later.",
+				"code":    "contract_not_configured",
+			},
+		})
+		return
+	}
 }
 
 // generateRoomCode 生成随机房间码
@@ -863,7 +1570,13 @@ type JoinByCodeData struct {
 
 func handleJoinByCode(c *Client, data json.RawMessage) {
 	var req JoinByCodeData
-	json.Unmarshal(data, &req)
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendToClient(c, map[string]interface{}{
+			"type": "error",
+			"data": map[string]string{"message": "invalid request data"},
+		})
+		return
+	}
 
 	if req.PlayerName == "" {
 		req.PlayerName = "玩家"
@@ -907,7 +1620,15 @@ func handleJoinByCode(c *Client, data json.RawMessage) {
 	player := game.NewPlayer(c.PlayerID, req.PlayerName, 0)
 	chips, _ := game.GetOrCreateUser(c.PlayerID, req.PlayerName)
 	player.Chips = chips
-	if err := foundRoom.AddPlayer(player); err != nil {
+	if foundRoom.State == game.RoomPlaying {
+		if err := foundRoom.AddSpectator(player); err != nil {
+			sendToClient(c, map[string]interface{}{
+				"type": "error",
+				"data": map[string]string{"message": err.Error()},
+			})
+			return
+		}
+	} else if err := foundRoom.AddPlayer(player); err != nil {
 		sendToClient(c, map[string]interface{}{
 			"type": "error",
 			"data": map[string]string{"message": err.Error()},
@@ -1042,32 +1763,17 @@ func processBotTurns(room *game.Room) {
 // settleGameToDB records game results to the database
 func settleGameToDB(room *game.Room, winner *game.Player, rake int) {
 	if room.HasAllIn && len(room.SidePots) > 0 {
-		// Side pot settlement: each pot may have a different winner
-		// Track total winnings per player
-		winnings := make(map[string]int)
+		// Side pot settlement: each pot's winner gets their winnings
+		// All player bets are already deducted from DB during the game
+		// Only add winnings to winners
 		for _, pot := range room.SidePots {
-			if pot.WinnerID != "" {
-				winnings[pot.WinnerID] += pot.WinAmount
+			if pot.WinnerID != "" && !room.FindPlayer(pot.WinnerID).IsBot {
+				game.AddUserChips(pot.WinnerID, pot.WinAmount)
+				game.AddTransaction(pot.WinnerID, "win", pot.WinAmount, room.ID, "")
 			}
 		}
 
-		// Update DB chips and record transactions for all players
-		for _, p := range room.Players {
-			if p.IsBot {
-				continue
-			}
-			game.UpdateUserChips(p.ID, p.Chips)
-			if w, ok := winnings[p.ID]; ok && w > 0 {
-				game.AddTransaction(p.ID, "win", w, room.ID, "")
-			} else {
-				// Player lost their bet
-				if p.BetTotal > 0 {
-					game.AddTransaction(p.ID, "loss", p.BetTotal, room.ID, "")
-				}
-			}
-		}
-
-		// Record platform rake
+		// Record platform rake from the winner's perspective
 		if rake > 0 {
 			rakeWinnerID := ""
 			if len(room.SidePots) > 0 {
@@ -1079,36 +1785,44 @@ func settleGameToDB(room *game.Room, winner *game.Player, rake int) {
 	}
 
 	// Normal single-winner settlement
-	if winner == nil {
+	if winner == nil || winner.IsBot {
 		return
 	}
-	var losers []string
-	var lossAmounts []int
-	for _, p := range room.Players {
-		if p.ID != winner.ID && !p.IsBot {
-			losers = append(losers, p.ID)
-			lossAmounts = append(lossAmounts, p.BetTotal)
-		}
-		// Update DB chips for non-bot players
-		if !p.IsBot {
-			game.UpdateUserChips(p.ID, p.Chips)
-		}
+
+	// Bets were already deducted from the DB during play, so only credit
+	// the net winnings after rake here.
+	winnings := room.Pot - rake
+	if winnings < 0 {
+		winnings = 0
 	}
-	// Record winner transaction (net winnings = pot - anteTotal)
-	if !winner.IsBot {
-		netWin := room.Pot - room.AnteTotal
-		if netWin < 0 {
-			netWin = 0
-		}
-		game.AddTransaction(winner.ID, "win", netWin, room.ID, "")
-	}
-	// Record loser transactions
-	for i, loserID := range losers {
-		game.AddTransaction(loserID, "loss", lossAmounts[i], room.ID, "")
-	}
+	game.AddUserChips(winner.ID, winnings)
+	game.AddTransaction(winner.ID, "win", winnings, room.ID, "")
+
 	// Record platform rake
 	if rake > 0 {
 		game.RecordRake(room.ID, winner.ID, rake, len(room.Players), room.BaseBet)
+	}
+}
+
+func syncRoomAntesToDB(room *game.Room) {
+	for _, player := range room.Players {
+		if player == nil || player.IsBot || player.BetTotal <= 0 {
+			continue
+		}
+
+		anteAmount := player.BetTotal
+		if err := game.DeductUserChips(player.ID, anteAmount); err != nil {
+			// The room state is already authoritative at this point, so fall back
+			// to syncing the user's DB balance to the room balance.
+			if syncErr := game.UpdateUserChips(player.ID, player.Chips); syncErr != nil {
+				log.Printf("failed to sync ante for player %s in room %s: deduct err=%v sync err=%v", player.ID, room.ID, err, syncErr)
+				continue
+			}
+		}
+
+		if err := game.AddTransaction(player.ID, "loss", anteAmount, room.ID, "game ante"); err != nil {
+			log.Printf("failed to record ante transaction for player %s in room %s: %v", player.ID, room.ID, err)
+		}
 	}
 }
 
@@ -1117,6 +1831,11 @@ func broadcastRoomState(room *game.Room) {
 	defer hub.mu.RUnlock()
 	for _, p := range room.Players {
 		if client, ok := hub.Clients[p.ID]; ok {
+			// Safeguard: only broadcast to players still connected to this room
+			// This prevents players who have already left from being "pulled back"
+			if client.RoomID != room.ID {
+				continue
+			}
 			roomInfo := room.GetRoomInfo(p.ID)
 			// Include the player's current DB chips separately for lobby sync (Item 2)
 			if !p.IsBot {
@@ -1131,12 +1850,35 @@ func broadcastRoomState(room *game.Room) {
 			})
 		}
 	}
+	for _, p := range room.Spectators {
+		if client, ok := hub.Clients[p.ID]; ok {
+			if client.RoomID != room.ID {
+				continue
+			}
+			sendToClient(client, map[string]interface{}{
+				"type": "room_state",
+				"data": room.GetRoomInfo(p.ID),
+			})
+		}
+	}
 }
 
 func broadcastEvent(room *game.Room, event *game.GameEvent) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 	for _, p := range room.Players {
+		if client, ok := hub.Clients[p.ID]; ok {
+			// Safeguard: only broadcast game events to players still connected to this room
+			if client.RoomID != room.ID {
+				continue
+			}
+			sendToClient(client, map[string]interface{}{
+				"type": "game_event",
+				"data": event,
+			})
+		}
+	}
+	for _, p := range room.Spectators {
 		if client, ok := hub.Clients[p.ID]; ok {
 			sendToClient(client, map[string]interface{}{
 				"type": "game_event",
@@ -1147,20 +1889,30 @@ func broadcastEvent(room *game.Room, event *game.GameEvent) {
 }
 
 func broadcastGameEnd(room *game.Room, winner *game.Player, rake int) {
+	room.PromoteSpectatorsForNextRound()
+
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 
 	winnerName := "未知"
 	winnerHand := "未知"
+	winnerHandKey := "hand.unknown"
 	winnerID := ""
 	if winner != nil {
 		winnerID = winner.ID
 		winnerName = winner.Name
-		winnerHand = game.HandTypeName(game.HandRank(winner.Hand))
+		winnerRank := game.HandRank(winner.Hand)
+		winnerHand = game.HandTypeName(winnerRank)
+		winnerHandKey = game.HandTypeKey(winnerRank)
 	}
 
 	for _, p := range room.Players {
 		if client, ok := hub.Clients[p.ID]; ok {
+			// Safeguard: only broadcast game end to players still connected to this room
+			// Leave early to avoid sending settlement data to players who already left
+			if client.RoomID != room.ID {
+				continue
+			}
 			endData := map[string]interface{}{
 				"winnerId":          winnerID,
 				"winnerName":        winnerName,
@@ -1168,6 +1920,7 @@ func broadcastGameEnd(room *game.Room, winner *game.Player, rake int) {
 				"anteTotal":         room.AnteTotal,
 				"room":              room.GetRoomInfo(p.ID),
 				"handType":          winnerHand,
+				"handTypeKey":       winnerHandKey,
 				"rake":              rake,
 				"nextRoundDeadline": room.NextRoundDeadline.UnixMilli(),
 			}
@@ -1179,6 +1932,31 @@ func broadcastGameEnd(room *game.Room, winner *game.Player, rake int) {
 				if err == nil {
 					endData["dbChips"] = dbChips
 				}
+			}
+			sendToClient(client, map[string]interface{}{
+				"type": "game_end",
+				"data": endData,
+			})
+		}
+	}
+	for _, p := range room.Spectators {
+		if client, ok := hub.Clients[p.ID]; ok {
+			if client.RoomID != room.ID {
+				continue
+			}
+			endData := map[string]interface{}{
+				"winnerId":          winnerID,
+				"winnerName":        winnerName,
+				"pot":               room.Pot,
+				"anteTotal":         room.AnteTotal,
+				"room":              room.GetRoomInfo(p.ID),
+				"handType":          winnerHand,
+				"handTypeKey":       winnerHandKey,
+				"rake":              rake,
+				"nextRoundDeadline": room.NextRoundDeadline.UnixMilli(),
+			}
+			if len(room.SidePots) > 0 {
+				endData["sidePots"] = room.SidePots
 			}
 			sendToClient(client, map[string]interface{}{
 				"type": "game_end",

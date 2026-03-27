@@ -28,6 +28,17 @@
 # 参数: priceFeed地址, fallbackPriceUsd(如 200000000000=$2000), stalenessThreshold(如 3600)
 ```
 
+### VS Code / Hardhat 本地运行
+
+`contracts/evm/` 目录已补充最小 Hardhat 工程，可直接在 VS Code 里运行：
+
+```bash
+cd contracts/evm
+npm install
+npm run compile
+npm test
+```
+
 ## TON 合约 — `zhajinhua_chips.fc`
 
 - **FunC 语言** — 使用 TON 标准开发范式

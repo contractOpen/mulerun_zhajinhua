@@ -2,6 +2,7 @@
   <div class="app">
     <!-- Toast -->
     <div v-if="error" class="toast error">{{ error }}</div>
+    <div v-if="notice" :class="['toast', noticeType]">{{ notice }}</div>
 
     <!-- LOGIN PAGE -->
     <div v-if="page === 'login'" class="page login-page">
@@ -24,7 +25,7 @@
             {{ effectiveWalletConnected ? effectiveWalletAddress.slice(0,6)+'...'+effectiveWalletAddress.slice(-4) : t('login.connectWallet') }}
           </button>
           <button class="btn-enter" @click="handleLogin" :disabled="!connected || (appMode === 'pe' && !effectiveWalletConnected)">
-            {{ connected ? t('login.enter') : t('login.connecting') }}
+            {{ !connected ? t('login.connecting') : authenticated ? t('login.enter') : t('login.authenticate') }}
           </button>
           <button class="btn-rules" @click="showRulesModal = true">{{ t('login.rules') }}</button>
         </div>
@@ -32,6 +33,27 @@
           <div class="lang-picker">
             <button v-for="l in locales" :key="l.code" :class="['lang-btn', { active: locale === l.code }]" @click="setLocale(l.code)">{{ l.name }}</button>
           </div>
+        </div>
+        <div v-if="loginLinks.length" class="login-links">
+          <a
+            v-for="link in loginLinks"
+            :key="link.key"
+            :href="link.href"
+            class="login-link"
+            :title="link.label"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg v-if="link.key === 'website'" class="login-link-svg mule-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M7.1 5.2 9.4 2.8l1.4 3h2.4l1.2-2.9 2.4 2.3-.6 2.8 2.2 2.2v6.4l-2.8 2.8H9l-3.1-3.2V10l2-2.1zm2.2 2.8-1 1v6l1.6 1.6h4.9l1.4-1.4v-4l-1.3.8-.7-1.4-1.8.7-1.6-.7-.9 1.2-1.2-.8.9-1.9 2.7-.9 2.1.6 1.5-1-1-1.2zm1.8 4.4a1 1 0 1 0 0 2.1 1 1 0 0 0 0-2.1zm3.1 0a1 1 0 1 0 0 2.1 1 1 0 0 0 0-2.1z"/>
+            </svg>
+            <svg v-else-if="link.key === 'telegram'" class="login-link-svg telegram-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M20.7 4.2 3.8 10.7c-1.2.5-1.2 1.2-.2 1.5l4.3 1.4 1.7 5.2c.2.6.1.8.8.8.5 0 .7-.2 1-.5l2.4-2.3 4.9 3.6c.9.5 1.5.3 1.7-.8l2.9-13.8c.3-1.4-.5-2-1.6-1.6zM9 13.2l8.4-5.3c.4-.2.7-.1.4.2l-7 6.3-.3 3.3z"/>
+            </svg>
+            <svg v-else class="login-link-svg discord-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M19.7 5.6a15.3 15.3 0 0 0-3.8-1.2l-.2.4-.3 1a14 14 0 0 0-6.8 0l-.3-1-.2-.4a15.3 15.3 0 0 0-3.8 1.2C1.9 9.2 1.2 12.7 1.5 16.1a15.5 15.5 0 0 0 4.7 2.4l1-1.7-1.7-.8.4-.3c3.2 1.5 6.9 1.5 10.1 0l.4.3-1.7.8 1 1.7a15.5 15.5 0 0 0 4.7-2.4c.4-4-.6-7.5-2.7-10.5zm-9.1 8.4c-.9 0-1.6-.8-1.6-1.8s.7-1.8 1.6-1.8 1.6.8 1.6 1.8-.7 1.8-1.6 1.8zm4.8 0c-.9 0-1.6-.8-1.6-1.8s.7-1.8 1.6-1.8 1.6.8 1.6 1.8-.7 1.8-1.6 1.8z"/>
+            </svg>
+          </a>
         </div>
         <div class="login-footer"><span>{{ t('login.footer') }}</span></div>
       </div>
@@ -44,7 +66,14 @@
           <div class="user-avatar" :style="{ backgroundImage: 'url('+identiconSvg(playerId || 'default')+')', backgroundSize: 'cover', background: avatarColor(0) }">{{ playerName[0] }}</div>
           <div class="user-meta">
             <div class="user-name">{{ playerName }}</div>
-            <div class="user-chips"><span class="chip-icon">🪙</span>{{ userChips }} {{ t('lobby.chips') }}
+            <div class="user-chips">
+              <span class="chip-icon">🪙</span>{{ userChips }} {{ t('lobby.chips') }}
+              <button v-if="bonusInfo?.canClaim" class="btn-bonus" @click="claimBonus()" :disabled="!authenticated">
+                {{ bonusInfo?.remaining || 0 }}/3
+              </button>
+              <button v-else-if="bonusInfo" class="btn-recharge-from-bonus" @click="showRechargeModal = true">
+                {{ t('lobby.recharge') }}
+              </button>
               <button class="btn-recharge-sm" @click="showRechargeModal = true">+</button>
             </div>
           </div>
@@ -79,6 +108,12 @@
             <div class="mode-icon">🎯</div>
             <h3>{{ t('lobby.matchPlay') }}</h3>
             <p>{{ t('lobby.matchDesc') }}</p>
+            <div class="mode-detail">
+              <label>{{ t('lobby.baseBet') }}</label>
+              <div class="opt-row">
+                <button v-for="b in [5,10,20,50,100]" :key="`match-${b}`" :class="['opt-btn',{active:baseBet===b}]" @click.stop="baseBet=b">{{b}}</button>
+              </div>
+            </div>
             <div v-if="matchStatus?.status==='matching'" class="matching-indicator">
               <div class="match-spinner"></div>
               <span>{{ t('lobby.matching') }} ({{ matchStatus.players }})</span>
@@ -101,6 +136,11 @@
 
     <!-- GAME PAGE -->
     <div v-else-if="page === 'game'" class="page game-page">
+      <div class="game-ambience">
+        <div class="ambience-glow left"></div>
+        <div class="ambience-glow right"></div>
+        <div class="ambience-mesh"></div>
+      </div>
       <!-- Top bar -->
       <div class="game-topbar">
         <button class="btn-back" @click="handleLeaveRoom">← {{ t('game.leave') }}</button>
@@ -118,6 +158,7 @@
         <div class="topbar-meta">
           <span>R{{ roomState?.round || 0 }}</span>
           <span>{{ t('game.currentBet') }}:{{ roomState?.currentBet || 0 }}</span>
+          <span v-if="roomState?.spectators?.length">{{ t('game.spectators', { n: roomState.spectators.length }) }}</span>
         </div>
         <div class="topbar-actions">
           <div class="lang-picker-inline">
@@ -130,6 +171,23 @@
       <!-- Table -->
       <div class="table-container">
         <div class="table-felt">
+          <div class="table-rail"></div>
+          <div class="table-inner-ring"></div>
+          <div class="table-chip-bursts">
+            <div
+              v-for="burst in chipBursts"
+              :key="burst.id"
+              class="chip-burst"
+              :style="burst.style"
+            >
+              <span v-for="n in burst.count" :key="n" class="burst-chip" :style="{ animationDelay: `${(n - 1) * 0.04}s` }"></span>
+            </div>
+          </div>
+          <div class="table-center-badge">
+            <span class="table-badge-label">{{ t('game.pot') }}</span>
+            <strong class="table-badge-value">{{ roomState?.pot || 0 }}</strong>
+            <span class="table-badge-meta">{{ t('game.anteLabel') }} {{ roomState?.anteTotal || 0 }}</span>
+          </div>
           <div class="table-inner">
             <div class="table-logo">{{ t('game.tableTitle') }}</div>
             <div class="table-pot-center">
@@ -143,6 +201,7 @@
               :class="['table-player',{
                 'is-turn':isTurn(p),'is-folded':p.state===3,'is-out':p.state===5
               }]" :style="getPlayerPosition(idx,otherPlayers.length)">
+              <div class="tp-plaque"></div>
               <div class="tp-avatar-wrap">
                 <!-- Countdown ring around avatar for current turn player -->
                 <svg v-if="isTurn(p) && roomState?.state===1" class="tp-countdown-ring" viewBox="0 0 52 52">
@@ -160,10 +219,10 @@
               <div v-if="p.betTotal>0" class="tp-bet"><span>{{ p.betTotal }}</span></div>
               <div class="tp-cards">
                 <template v-if="p.hand && roomState.state===2">
-                  <div v-for="(c,ci) in p.hand" :key="ci" :class="['mini-card',suitClass(c.suit)]">{{ valueName(c.value) }}{{ suitSymbol(c.suit) }}</div>
+                  <div v-for="(c,ci) in p.hand" :key="ci" :class="['mini-card', 'fan-card', suitClass(c.suit)]" :style="fanCardStyle(ci, 3)">{{ valueName(c.value) }}{{ suitSymbol(c.suit) }}</div>
                 </template>
                 <template v-else-if="roomState.state===1 && (p.state===2||p.state===4)">
-                  <div class="mini-card back" v-for="ci in 3" :key="ci"></div>
+                  <div class="mini-card back fan-card" v-for="ci in 3" :key="ci" :style="fanCardStyle(ci - 1, 3)"></div>
                 </template>
               </div>
               <div v-if="p.state===3" class="tp-status folded">{{ t('game.folded') }}</div>
@@ -201,14 +260,14 @@
         <!-- Hand -->
         <div class="my-hand">
           <template v-if="myPlayer?.hand && myPlayer?.looked">
-            <div v-for="(c,i) in myPlayer.hand" :key="i" :class="['game-card',suitClass(c.suit)]" :style="{animationDelay:i*0.1+'s'}">
+            <div v-for="(c,i) in myPlayer.hand" :key="i" :class="['game-card','fanned-game-card',suitClass(c.suit)]" :style="myHandCardStyle(i)">
               <div class="gc-corner top"><div class="gc-value">{{ valueName(c.value) }}</div><div class="gc-suit">{{ suitSymbol(c.suit) }}</div></div>
               <div class="gc-center">{{ suitSymbol(c.suit) }}</div>
               <div class="gc-corner bottom"><div class="gc-value">{{ valueName(c.value) }}</div><div class="gc-suit">{{ suitSymbol(c.suit) }}</div></div>
             </div>
           </template>
           <template v-else-if="roomState?.state===1">
-            <div class="game-card card-back" v-for="i in 3" :key="i" @click="lookCards">
+            <div class="game-card card-back fanned-game-card" v-for="i in 3" :key="i" :style="myHandCardStyle(i - 1)" @click="lookCards">
               <div class="card-back-pattern"></div>
               <span class="peek-label">{{ t('game.look') }}</span>
             </div>
@@ -221,13 +280,22 @@
           <button class="act-btn fold" @click="doFold"><span class="act-icon">✕</span><span class="act-label">{{ t('action.fold') }}</span></button>
           <button v-if="!roomState.hasAllIn" class="act-btn call" @click="doCall"><span class="act-icon">✓</span><span class="act-label">{{ t('action.call') }}</span><small>{{ callAmount }}</small></button>
           <button v-if="!roomState.hasAllIn" class="act-btn raise" @click="doRaise"><span class="act-icon">↑</span><span class="act-label">{{ t('action.raise') }}</span><small>{{ raiseAmount }}</small></button>
-          <button v-if="canCompare && !roomState.hasAllIn" class="act-btn compare" @click="showCompareModal=true"><span class="act-icon">⚔</span><span class="act-label">{{ t('action.compare') }}</span></button>
+          <button v-if="canCompare" class="act-btn compare" @click="showCompareModal=true"><span class="act-icon">⚔</span><span class="act-label">{{ t('action.compare') }}</span><small v-if="roomState?.hasAllIn">{{ allInCompareCost }}</small></button>
           <button class="act-btn allin" @click="doAllIn"><span class="act-icon">🔥</span><span class="act-label">{{ t('action.allIn') }}</span></button>
         </div>
 
         <!-- Waiting / Start -->
+        <div v-if="roomState?.isSpectator" class="spectator-banner">{{ t('game.spectating') }}</div>
         <div v-if="roomState?.state===0" class="waiting-bar">
-          <button class="btn-start" @click="startGame()">{{ t('game.start') }}</button>
+          <div v-if="isRoomOwner && !roomState?.isMatch" class="waiting-basebet">
+            <span class="waiting-basebet-label">{{ t('lobby.baseBet') }}</span>
+            <div class="opt-row">
+              <button v-for="b in [5,10,20,50,100]" :key="`room-bet-${b}`" :class="['opt-btn',{active:roomState?.baseBet===b}]" @click="handleUpdateBaseBet(b)">{{ b }}</button>
+            </div>
+          </div>
+          <div v-else class="waiting-readonly">{{ t('lobby.baseBet') }} {{ roomState?.baseBet || 0 }}</div>
+          <button v-if="canStartWaitingRoom" class="btn-start" @click="startGame()">{{ t('game.start') }}</button>
+          <div v-else-if="roomState?.isPrivate && !roomState?.isSpectator" class="waiting-readonly">{{ t('game.ownerOnlyStart') }}</div>
         </div>
 
         <!-- In-game recharge -->
@@ -242,12 +310,11 @@
         <div :class="['result-popup',isWinner?'win':'lose']">
           <div class="result-glow"></div>
           <div v-if="isWinner" class="result-crown">👑</div>
-          <h2>{{ isWinner ? t('result.youWin') : gameEnd.winnerName+' '+t('result.wins') }}</h2>
+          <h2>{{ isWinner ? t('result.youWin') : t('result.wins', { name: gameEnd.winnerName }) }}</h2>
           <div class="result-info">
-            <div class="result-row"><span>{{ t('result.handType') }}</span><strong>{{ gameEnd.handType }}</strong></div>
-            <div class="result-row"><span>{{ t('result.pot') }}</span><strong class="gold">+{{ gameEnd.pot }}</strong></div>
-            <div v-if="gameEnd.anteTotal" class="result-row"><span>Ante</span><strong class="dim">-{{ gameEnd.anteTotal }}</strong></div>
-            <div v-if="gameEnd.rake" class="result-row"><span>{{ t('result.rake') || 'Rake' }}</span><strong class="dim">-{{ gameEnd.rake }}</strong></div>
+            <div class="result-row"><span>{{ t('result.handType') }}</span><strong>{{ localizedGameEndHandType }}</strong></div>
+            <div class="result-row"><span>{{ t('result.netWin') }}</span><strong class="gold">+{{ finalResultPot }}</strong></div>
+            <div v-if="gameEnd.rake" class="result-row"><span>{{ t('result.rake') }}</span><strong class="dim">-{{ gameEnd.rake }}</strong></div>
           </div>
           <div class="result-hands">
             <div v-for="p in roomState?.players" :key="p.id" class="result-player">
@@ -268,7 +335,7 @@
           <div v-if="myPlayer && myPlayer.chips<=0" class="bankrupt-msg">{{ t('result.bankrupt') }}</div>
           <div class="result-btn-row">
             <button class="btn-exit-game" @click="handleLeaveRoom">{{ t('result.exit') }}</button>
-            <button v-if="myPlayer && myPlayer.chips > 0 && !isConfirmedNextRound" class="btn-next-round" @click="handleNewRound">{{ t('result.playAgain') }}</button>
+            <button v-if="canPlayAgainAfterResult" class="btn-next-round" @click="handleNewRound">{{ t('result.playAgain') }}</button>
             <button v-else-if="myPlayer && myPlayer.chips <= 0" class="btn-next-round recharge" @click="showRechargeModal=true">{{ t('result.recharge') }}</button>
           </div>
         </div>
@@ -296,13 +363,13 @@
         <h3>{{ t('lobby.rechargeTitle') }}</h3>
         <p class="modal-desc">{{ t('lobby.rechargeDesc') }}</p>
         <div class="recharge-options">
-          <button v-for="amt in [100,500,1000,5000]" :key="amt" :class="['recharge-btn',{active:rechargeAmount===amt}]" @click="rechargeAmount=amt">
+          <button v-for="amt in rechargeOptions" :key="amt" :class="['recharge-btn',{active:rechargeAmount===amt}]" @click="rechargeAmount=amt">
             <span class="recharge-value">{{ amt }}</span>
             <span class="recharge-label">{{ t('lobby.chips') }}</span>
           </button>
         </div>
-        <div class="recharge-wallet" v-if="walletConnected">
-          <span>{{ t('common.wallet') }}: {{ walletAddress.slice(0,10) }}...</span>
+        <div class="recharge-wallet" v-if="effectiveWalletConnected">
+          <span>{{ t('common.wallet') }}: {{ effectiveWalletAddress.slice(0,10) }}...</span>
         </div>
         <button class="btn-confirm-recharge" @click="handleRecharge">{{ t('lobby.confirmRecharge') }}</button>
         <button class="btn-close" @click="showRechargeModal=false">{{ t('common.cancel') }}</button>
@@ -310,11 +377,11 @@
     </div>
 
     <!-- Rules modal -->
-    <div v-if="showRulesModal" class="modal-overlay" @click.self="showRulesModal=false">
-      <div class="modal rules-modal">
+    <div v-if="showRulesModal" class="modal-overlay" @click="showRulesModal=false">
+      <div class="modal rules-modal" @click.stop>
         <h3>{{ t('login.rulesTitle') }}</h3>
         <div class="rules-content">
-          <p v-for="(line, i) in rulesLines" :key="i" v-if="line.trim()">{{ line }}</p>
+          <p v-for="(line, i) in rulesLines" :key="i">{{ line }}</p>
         </div>
         <button class="btn-close" @click="showRulesModal=false">{{ t('common.cancel') }}</button>
       </div>
@@ -323,30 +390,20 @@
     <!-- Wallet connect modal (PE mode) -->
     <div v-if="showWalletModal" class="modal-overlay" @click.self="showWalletModal=false">
       <div class="modal wallet-modal">
-        <h3>Connect Wallet</h3>
-        <p class="modal-desc">Choose your wallet to connect</p>
+        <h3>{{ t('wallet.connectTitle') }}</h3>
+        <p class="modal-desc">{{ t('wallet.connectDescription') }}</p>
         <div v-if="walletError" class="wallet-error">{{ walletError }}</div>
         <div class="wallet-options">
           <button class="wallet-opt" @click="connectEVM(); showWalletModal=false" :disabled="walletConnecting">
             <span class="wallet-opt-icon">🦊</span>
-            <span class="wallet-opt-name">MetaMask</span>
+            <span class="wallet-opt-name">{{ t('wallet.metamask') }}</span>
             <span class="wallet-opt-chain">EVM</span>
-          </button>
-          <button class="wallet-opt" @click="connectTON(); showWalletModal=false" :disabled="walletConnecting">
-            <span class="wallet-opt-icon">💎</span>
-            <span class="wallet-opt-name">TON Wallet</span>
-            <span class="wallet-opt-chain">TON</span>
           </button>
           <button class="wallet-opt" @click="connectSOL(); showWalletModal=false" :disabled="walletConnecting">
             <span class="wallet-opt-icon">👻</span>
-            <span class="wallet-opt-name">Phantom</span>
+            <span class="wallet-opt-name">{{ t('wallet.phantom') }}</span>
             <span class="wallet-opt-chain">SOL</span>
           </button>
-        </div>
-        <div class="wallet-manual">
-          <p class="modal-desc">Or enter address manually:</p>
-          <input v-model="manualWalletInput" placeholder="0x... / EQ... / Sol..." class="room-input" />
-          <button class="btn-confirm-recharge" @click="handleManualWallet" :disabled="!manualWalletInput">Connect</button>
         </div>
         <button class="btn-close" @click="showWalletModal=false">{{ t('common.cancel') }}</button>
       </div>
@@ -366,16 +423,17 @@ const {
   walletAddress: realWalletAddress, walletChain, walletConnected: realWalletConnected,
   walletConnecting, walletError,
   hasMetaMask, hasPhantom,
-  connectEVM, connectTON, connectSOL,
-  setManualAddress, validateAddress, detectChain, disconnect: disconnectWallet
+  connectEVM, connectSOL,
+  signAuthMessage,
+  disconnect: disconnectWallet
 } = useWallet()
 
 const appMode = import.meta.env.VITE_APP_MODE || 'te'
 
 const {
-  connected, playerId, userChips, roomState, gameEvents, gameEnd, error, matchStatus, nextRoundStatus, serverMode,
-  connect, createRoom, joinRoom, startGame: wsStartGame, doAction: wsDoAction,
-  newRound: wsNewRound, startMatch, cancelMatch, recharge, joinByCode, leaveRoom: wsLeaveRoom
+  connected, authenticated, playerId, userChips, roomState, gameEvents, gameEnd, error, matchStatus, nextRoundStatus, serverMode, bonusInfo,
+  connect, login, requestAuthChallenge, createRoom, updateBaseBet: wsUpdateBaseBet, joinRoom, startGame: wsStartGame, doAction: wsDoAction,
+  newRound: wsNewRound, startMatch, cancelMatch, recharge, joinByCode, leaveRoom: wsLeaveRoom, claimBonus, checkBonusStatus
 } = useGame()
 
 const page = ref('login')
@@ -390,9 +448,31 @@ const rechargeAmount = ref(500)
 const showCompareModal = ref(false)
 const showRulesModal = ref(false)
 const showWalletModal = ref(false)
-const manualWalletInput = ref('')
 const joinRoomId = ref('')
 const logRef = ref(null)
+const pendingLogin = ref(false) // NEW: flag to auto-enter lobby after auth
+const notice = ref('')
+const noticeType = ref('info')
+const chipBursts = ref([])
+const publicConfig = ref({
+  websiteUrl: '',
+  telegramUrl: '',
+  discordUrl: ''
+})
+const DEFAULT_API_BASE_URL = 'https://game.atdl.link'
+const runtimeApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, '')
+
+const LOW_CHIPS_THRESHOLD = 50
+
+let noticeTimer = null
+let chipBurstId = 0
+let handleAuthSessionExpired = null
+let handleRoomClosed = null
+let bonusDayKey = getUtcDayKey()
+let bonusDayInterval = null
+let lowChipsStatusRequested = false
+let lowChipsAutoClaimPending = false
+let lowChipsNoBonusReminderKey = ''
 
 // Global countdown timer (visible to all players for whoever's turn it is)
 const countdown = ref(20)
@@ -444,31 +524,129 @@ const currentTurnPlayerId = computed(() => {
   return roomState.value.players[roomState.value.turnIndex]?.id || null
 })
 
+let handlePlayerNameUpdate = null
+
+function getUtcDayKey() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function showNotice(message, type = 'info', duration = 3200) {
+  if (!message) return
+  notice.value = message
+  noticeType.value = type
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    notice.value = ''
+    noticeTimer = null
+  }, duration)
+}
+
+function resetLowChipsBonusFlow() {
+  lowChipsStatusRequested = false
+  lowChipsAutoClaimPending = false
+  lowChipsNoBonusReminderKey = ''
+}
+
+function refreshBonusDayIfNeeded() {
+  const nextDayKey = getUtcDayKey()
+  if (nextDayKey === bonusDayKey) return
+  bonusDayKey = nextDayKey
+  resetLowChipsBonusFlow()
+  if (authenticated.value && userChips.value < LOW_CHIPS_THRESHOLD) {
+    lowChipsStatusRequested = true
+    checkBonusStatus()
+  }
+}
+
 onMounted(() => {
   connect()
   playerName.value = t('common.player') + Math.floor(Math.random() * 1000)
+  bonusDayInterval = setInterval(refreshBonusDayIfNeeded, 60 * 1000)
+  loadPublicConfig()
+
+  // NEW: Listen for player name updates from backend
+  handlePlayerNameUpdate = (e) => {
+    playerName.value = e.detail.playerName
+  }
+  window.addEventListener('playerNameUpdated', handlePlayerNameUpdate)
+  handleAuthSessionExpired = (e) => {
+    page.value = 'login'
+    pendingLogin.value = false
+    showNotice(e?.detail?.message || t('notice.authExpired'), 'info', 4200)
+  }
+  window.addEventListener('authSessionExpired', handleAuthSessionExpired)
+  handleRoomClosed = () => {
+    if (authenticated.value) {
+      page.value = 'lobby'
+    }
+  }
+  window.addEventListener('roomClosed', handleRoomClosed)
+
   // Check URL for room code to auto-join
   const urlParams = new URLSearchParams(window.location.search)
   const roomCode = urlParams.get('room')
   if (roomCode) {
     joinRoomId.value = roomCode
-    // Wait for connection, then auto-join
-    const unwatch = watch(connected, (c) => {
-      if (c) {
+    // Wait for authentication, then auto-join
+    const authUnwatch = watch(authenticated, (auth) => {
+      if (auth) {
         setTimeout(() => {
-          page.value = 'lobby'
-          joinByCode(roomCode, playerName.value)
+          joinByCode(roomCode, playerName.value, effectiveWalletAddress.value, walletChain.value)
         }, 500)
-        unwatch()
+        authUnwatch()
       }
     }, { immediate: true })
   }
 })
 
-onUnmounted(() => { stopCountdown(); stopNextRoundCountdown() })
+onUnmounted(() => {
+  stopCountdown()
+  stopNextRoundCountdown()
+  if (bonusDayInterval) clearInterval(bonusDayInterval)
+  if (noticeTimer) clearTimeout(noticeTimer)
+  // Cleanup listener
+  if (handlePlayerNameUpdate) {
+    window.removeEventListener('playerNameUpdated', handlePlayerNameUpdate)
+  }
+  if (handleAuthSessionExpired) {
+    window.removeEventListener('authSessionExpired', handleAuthSessionExpired)
+  }
+  if (handleRoomClosed) {
+    window.removeEventListener('roomClosed', handleRoomClosed)
+  }
+})
 
 // Page navigation
-watch(roomState, (rs) => { if (rs && page.value !== 'game') page.value = 'game' })
+watch(authenticated, (auth) => {
+  if (auth && pendingLogin.value) {
+    pendingLogin.value = false
+    page.value = 'lobby'
+    // Check bonus status after authentication
+    setTimeout(() => checkBonusStatus(), 100)
+  }
+  if (!auth) {
+    resetLowChipsBonusFlow()
+    if (page.value !== 'login') page.value = 'login'
+  }
+})
+watch(connected, (isConnected) => {
+  if (!isConnected || authenticated.value || appMode !== 'pe') return
+  const session = getStoredAuthSession()
+  if (!session) return
+  if (!effectiveWalletAddress.value || !walletChain.value) return
+  if (session.wallet !== effectiveWalletAddress.value || session.chain !== walletChain.value) return
+  pendingLogin.value = true
+  login(effectiveWalletAddress.value, walletChain.value, playerName.value, '', '', session.token)
+}, { immediate: true })
+watch(roomState, (rs) => {
+  if (rs) {
+    if (page.value !== 'game') page.value = 'game'
+    return
+  }
+  if (page.value === 'game' && authenticated.value) {
+    page.value = 'lobby'
+  }
+})
 watch(matchStatus, (ms) => { if (ms?.status === 'found') page.value = 'game' })
 
 // Auto-scroll log
@@ -486,6 +664,9 @@ watch(gameEvents, (evts) => {
     case 'fold': playSound('fold'); break
     case 'compare': playSound('card'); break
   }
+  if (['call', 'raise', 'allin', 'compare'].includes(last.type)) {
+    spawnChipBurst(last)
+  }
 }, { deep: true })
 
 watch(gameEnd, (ge) => {
@@ -501,6 +682,61 @@ watch(gameEnd, (ge) => {
 // Watch next round status updates
 watch(nextRoundStatus, (nrs) => {
   if (nrs?.nextRoundDeadline) startNextRoundCountdown(nrs.nextRoundDeadline)
+})
+
+watch([authenticated, userChips], ([auth, chips]) => {
+  refreshBonusDayIfNeeded()
+  if (!auth) return
+
+  if (chips >= LOW_CHIPS_THRESHOLD) {
+    lowChipsStatusRequested = false
+    lowChipsAutoClaimPending = false
+    lowChipsNoBonusReminderKey = ''
+    return
+  }
+
+  if (!lowChipsStatusRequested) {
+    lowChipsStatusRequested = true
+    checkBonusStatus()
+  }
+}, { immediate: true })
+
+watch(showRechargeModal, (visible) => {
+  if (!visible) return
+  rechargeAmount.value = bonusInfo.value?.canClaim ? 500 : 100
+})
+
+watch(bonusInfo, (info) => {
+  refreshBonusDayIfNeeded()
+  if (!authenticated.value || !info || userChips.value >= LOW_CHIPS_THRESHOLD) return
+  const inRoom = !!roomState.value || page.value === 'game'
+
+  if (info.canClaim) {
+    if (inRoom) {
+      lowChipsAutoClaimPending = false
+      return
+    }
+    if (!lowChipsAutoClaimPending) {
+      lowChipsAutoClaimPending = true
+      showNotice(t('notice.lowChipsAutoClaim'), 'info')
+      claimBonus()
+    }
+    return
+  }
+
+  lowChipsAutoClaimPending = false
+  const reminderKey = `${bonusDayKey}:${info.claimed}:${info.remaining}:${info.message || ''}`
+  if (lowChipsNoBonusReminderKey === reminderKey) return
+  lowChipsNoBonusReminderKey = reminderKey
+  showNotice(info.message || t('notice.lowChipsExhausted'), 'info', 4200)
+})
+
+watch(userChips, (chips, prevChips) => {
+  if (lowChipsAutoClaimPending && prevChips < LOW_CHIPS_THRESHOLD && chips >= LOW_CHIPS_THRESHOLD) {
+    lowChipsAutoClaimPending = false
+    lowChipsStatusRequested = false
+    showNotice(t('notice.lowChipsClaimed'), 'success')
+  }
 })
 
 // Is the current player confirmed for next round
@@ -528,6 +764,11 @@ const confirmedCount = computed(() => {
 const humanPlayerCount = computed(() => {
   if (!roomState.value) return 0
   return roomState.value.players.filter(p => !p.isBot).length
+})
+const totalPlayerCount = computed(() => roomState.value?.players?.length || 0)
+const canPlayAgainAfterResult = computed(() => {
+  if (!myPlayer.value || myPlayer.value.chips <= 0 || isConfirmedNextRound.value) return false
+  return totalPlayerCount.value >= 2
 })
 
 // Computed
@@ -560,6 +801,38 @@ watch(() => roomState.value?.turnDeadline, (td) => {
 })
 
 const isWinner = computed(() => gameEnd.value?.winnerId === playerId.value)
+const finalResultPot = computed(() => {
+  if (!gameEnd.value) return 0
+  return Math.max(0, (gameEnd.value.pot || 0) - (gameEnd.value.rake || 0))
+})
+const handTypeFallbackMap = {
+  豹子: 'hand.threeOfAKind',
+  同花顺: 'hand.straightFlush',
+  金花: 'hand.flush',
+  顺子: 'hand.straight',
+  对子: 'hand.pair',
+  散牌: 'hand.highCard',
+  未知: 'hand.unknown',
+  ThreeOfAKind: 'hand.threeOfAKind',
+  StraightFlush: 'hand.straightFlush',
+  Flush: 'hand.flush',
+  Straight: 'hand.straight',
+  Pair: 'hand.pair',
+  HighCard: 'hand.highCard',
+  Single: 'hand.highCard',
+  Unknown: 'hand.unknown',
+}
+const localizedGameEndHandType = computed(() => {
+  if (!gameEnd.value) return ''
+  const key = gameEnd.value.handTypeKey || handTypeFallbackMap[gameEnd.value.handType]
+  return key ? t(key) : (gameEnd.value.handType || t('hand.unknown'))
+})
+const isRoomOwner = computed(() => roomState.value?.ownerId === playerId.value)
+const canStartWaitingRoom = computed(() => {
+  if (!roomState.value || roomState.value.state !== 0 || roomState.value.isSpectator) return false
+  if (roomState.value.isPrivate) return isRoomOwner.value
+  return true
+})
 
 // SVG countdown offsets for different ring sizes
 const countdownOffsetOther = computed(() => {
@@ -576,6 +849,7 @@ const callAmount = computed(() => {
   const lastBet = roomState.value.lastBet || roomState.value.baseBet
   return myPlayer.value?.looked ? lastBet * 2 : lastBet
 })
+const allInCompareCost = computed(() => roomState.value?.lastAllInAmount || 0)
 const raiseAmount = computed(() => {
   if (!roomState.value) return 0
   const lastBet = roomState.value.lastBet || roomState.value.baseBet
@@ -585,6 +859,11 @@ const raiseAmount = computed(() => {
 const canCompare = computed(() => comparablePlayers.value.length > 0)
 const comparablePlayers = computed(() => {
   if (!roomState.value) return []
+  if (roomState.value.hasAllIn) {
+    const compareCost = roomState.value.lastAllInAmount || 0
+    if (!myPlayer.value || compareCost <= 0 || myPlayer.value.chips < compareCost) return []
+    return roomState.value.players.filter(p => p.id !== playerId.value && p.state === 4)
+  }
   return roomState.value.players.filter(p => p.id !== playerId.value && (p.state === 2 || p.state === 4))
 })
 const recentEvents = computed(() => gameEvents.value.slice(-8))
@@ -598,8 +877,22 @@ const effectiveWalletAddress = computed(() => {
 })
 const rulesLines = computed(() => {
     const content = t('login.rulesContent')
-    return content.split(/\\n|\n/).filter(l => l.trim())
+    // Replace escaped newlines with actual newlines, split, and filter empty lines
+    return content
+      .replace(/\\n/g, '\n')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
 })
+const loginLinks = computed(() => {
+  const links = [
+    { key: 'website', label: 'Website', href: normalizeExternalUrl(publicConfig.value.websiteUrl) },
+    { key: 'telegram', label: 'Telegram', href: normalizeExternalUrl(publicConfig.value.telegramUrl) },
+    { key: 'discord', label: 'Discord', href: normalizeExternalUrl(publicConfig.value.discordUrl) }
+  ]
+  return links.filter(link => !!link.href)
+})
+const rechargeOptions = computed(() => bonusInfo.value?.canClaim ? [500] : [100, 500, 1000, 5000])
 
 const handTypeName = computed(() => {
   if (!myPlayer.value?.hand) return ''
@@ -624,6 +917,38 @@ function isStraightFn(h) {
 }
 function hasPair(h) { return h[0].value===h[1].value || h[1].value===h[2].value || h[0].value===h[2].value }
 
+function getApiUrl(path) {
+  if (!runtimeApiBaseUrl) return path
+  return `${runtimeApiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+async function loadPublicConfig() {
+  try {
+    const response = await fetch(getApiUrl('/api/config/public'))
+    if (!response.ok) throw new Error('failed to load public config')
+    const data = await response.json()
+    publicConfig.value = {
+      websiteUrl: data['social.websiteUrl'] || '',
+      telegramUrl: data['social.telegramUrl'] || '',
+      discordUrl: data['social.discordUrl'] || ''
+    }
+  } catch {
+    publicConfig.value = {
+      websiteUrl: '',
+      telegramUrl: '',
+      discordUrl: ''
+    }
+  }
+}
+
+function normalizeExternalUrl(raw) {
+  if (!raw) return ''
+  const value = raw.trim()
+  if (!value) return ''
+  if (/^(https?:\/\/|tg:\/\/|discord:\/\/)/i.test(value)) return value
+  return `https://${value}`
+}
+
 // Actions
 function handleWalletConnect() {
   playSound('click')
@@ -631,29 +956,47 @@ function handleWalletConnect() {
     // TE mode: simulate wallet
     walletConnected.value = true
     walletAddress.value = '0x'+Array.from({length:40},()=>'0123456789abcdef'[Math.floor(Math.random()*16)]).join('')
+    // Auto-generate nickname from wallet suffix
+    playerName.value = 'player_' + walletAddress.value.slice(-6)
   }
   // PE mode: use the wallet connect modal
   if (appMode === 'pe') {
     showWalletModal.value = true
   }
 }
-function handleManualWallet() {
-  const addr = manualWalletInput.value.trim()
-  const chain = detectChain(addr)
-  if (chain && validateAddress(addr, chain)) {
-    setManualAddress(addr, chain)
-    showWalletModal.value = false
-  } else {
-    walletError.value = 'Invalid address format'
-  }
-}
-function handleLogin() {
+async function handleLogin() {
   if (!playerName.value.trim()) playerName.value = t('common.player')+Math.floor(Math.random()*1000)
   playSound('click')
+
+  // NEW: If not authenticated, send login request with playerName
+  if (!authenticated.value) {
+    pendingLogin.value = true
+    try {
+      const storedSession = getStoredAuthSession()
+      if (appMode === 'pe' && storedSession && storedSession.wallet === effectiveWalletAddress.value && storedSession.chain === walletChain.value) {
+        login(effectiveWalletAddress.value, walletChain.value, playerName.value, '', '', storedSession.token)
+      } else if (appMode === 'pe' && (walletChain.value === 'evm' || walletChain.value === 'sol')) {
+        const challenge = await requestAuthChallenge(effectiveWalletAddress.value, walletChain.value)
+        const signature = await signAuthMessage(challenge.message, walletChain.value)
+        login(effectiveWalletAddress.value, walletChain.value, playerName.value, challenge.nonce, signature)
+      } else {
+        login(effectiveWalletAddress.value, walletChain.value, playerName.value)
+      }
+    } catch (e) {
+      pendingLogin.value = false
+      const message = e?.message || t('notice.walletAuthFailed')
+      walletError.value = message
+      showNotice(message, 'info', 4200)
+    }
+    return
+  }
+
+  // After authentication, enter lobby
+  pendingLogin.value = false
   page.value = 'lobby'
 }
 function handleQuickStart() { playSound('click'); createRoom(playerName.value,botCount.value,baseBet.value, effectiveWalletAddress.value, walletChain.value) }
-function handleStartMatch() { playSound('click'); startMatch(playerName.value, effectiveWalletAddress.value, walletChain.value) }
+function handleStartMatch() { playSound('click'); startMatch(playerName.value, effectiveWalletAddress.value, walletChain.value, baseBet.value) }
 function handleCreatePrivateRoom() { playSound('click'); createRoom(playerName.value,0,baseBet.value, effectiveWalletAddress.value, walletChain.value) }
 function handleJoinByCode() {
   if (joinRoomId.value.trim()) { playSound('click'); joinByCode(joinRoomId.value.trim(),playerName.value, effectiveWalletAddress.value, walletChain.value) }
@@ -721,7 +1064,7 @@ function identiconSvg(id) {
 }
 function handleRecharge() {
   playSound('chip')
-  recharge(rechargeAmount.value, walletAddress.value)
+  recharge(rechargeAmount.value, effectiveWalletAddress.value)
   showRechargeModal.value = false
 }
 function handleLeaveRoom() {
@@ -733,6 +1076,7 @@ function handleLeaveRoom() {
   page.value = 'lobby'
 }
 function startGame() { playSound('card'); wsStartGame() }
+function handleUpdateBaseBet(baseBetValue) { playSound('click'); wsUpdateBaseBet(baseBetValue) }
 function lookCards() { playSound('card'); wsDoAction(6) }
 function doFold() { stopCountdown(); playSound('fold'); wsDoAction(3) }
 function doCall() { stopCountdown(); playSound('chip'); wsDoAction(1) }
@@ -764,6 +1108,88 @@ function particleStyle(i) {
   const x=Math.random()*100,y=Math.random()*100
   const size=2+Math.random()*4,delay=Math.random()*5
   return {left:x+'%',top:y+'%',width:size+'px',height:size+'px',animationDelay:delay+'s'}
+}
+
+function getStoredAuthSession() {
+  try {
+    const raw = window.localStorage?.getItem('mule_auth_session')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.token || !parsed?.wallet || !parsed?.chain || !parsed?.expiresAt) return null
+    if (Date.now() >= parsed.expiresAt) {
+      window.localStorage?.removeItem('mule_auth_session')
+      window.dispatchEvent(new CustomEvent('authSessionExpired', {
+        detail: { message: t('notice.authExpired') }
+      }))
+      return null
+    }
+    return parsed
+  } catch (_) {
+    window.localStorage?.removeItem('mule_auth_session')
+    return null
+  }
+}
+
+function getPlayerTablePosition(playerIdForEvent) {
+  if (!playerIdForEvent || playerIdForEvent === playerId.value) {
+    return { x: 50, y: 86 }
+  }
+  const players = otherPlayers.value || []
+  const idx = players.findIndex(p => p.id === playerIdForEvent)
+  if (idx === -1) return { x: 50, y: 50 }
+  const angleStart = -180
+  const angleRange = 180
+  const angle = angleStart + (angleRange / (players.length + 1)) * (idx + 1)
+  const rad = angle * Math.PI / 180
+  const rx = 42
+  const ry = 38
+  return {
+    x: 50 + rx * Math.cos(rad),
+    y: 50 + ry * Math.sin(rad)
+  }
+}
+
+function spawnChipBurst(event) {
+  if (!roomState.value || page.value !== 'game') return
+  const origin = getPlayerTablePosition(event.playerId)
+  const amount = Number(event.amount) || 0
+  const count = Math.max(2, Math.min(5, Math.ceil(amount / 20)))
+  const id = ++chipBurstId
+  chipBursts.value.push({
+    id,
+    count,
+    style: {
+      left: `${origin.x}%`,
+      top: `${origin.y}%`,
+      '--chip-dx': `${50 - origin.x}%`,
+      '--chip-dy': `${50 - origin.y}%`
+    }
+  })
+  window.setTimeout(() => {
+    chipBursts.value = chipBursts.value.filter(burst => burst.id !== id)
+  }, 900)
+}
+
+function fanCardStyle(index, total) {
+  const center = (total - 1) / 2
+  const offset = index - center
+  return {
+    '--fan-rotate': `${offset * 7}deg`,
+    '--fan-shift': `${offset * 6}px`,
+    '--fan-lift': `${Math.abs(offset) * 2}px`
+  }
+}
+
+function myHandCardStyle(index) {
+  const center = 1
+  const offset = index - center
+  return {
+    animationDelay: `${(index + 1) * 0.1}s`,
+    '--card-deal-delay': `${(index + 1) * 0.1}s`,
+    '--hand-rotate': `${offset * 8}deg`,
+    '--hand-shift': `${offset * 10}px`,
+    '--hand-lift': `${Math.abs(offset) * 3}px`
+  }
 }
 
 function getPlayerPosition(idx,total) {
@@ -823,6 +1249,8 @@ html, body {
 
 /* Toast */
 .toast { position:fixed; top:max(12px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); background:var(--red); color:#fff; padding:6px 18px; border-radius:20px; z-index:200; font-size:12px; animation:slideDown .3s ease; white-space:nowrap; }
+.toast.info { background:rgba(79, 172, 254, 0.96); color:#08111f; }
+.toast.success { background:rgba(46, 213, 115, 0.96); color:#04140b; }
 @keyframes slideDown { from{opacity:0;transform:translateX(-50%) translateY(-20px);} }
 
 /* ===== Lang picker (replaces <select>) ===== */
@@ -846,6 +1274,13 @@ html, body {
 .game-title { font-size:24px; letter-spacing:6px; color:var(--gold); text-shadow:0 0 20px rgba(255,215,0,0.3); }
 .game-subtitle { font-size:11px; color:var(--text-dim); margin-top:4px; letter-spacing:2px; }
 .login-form { display:flex; flex-direction:column; gap:10px; }
+.login-links { display:flex; justify-content:center; gap:14px; margin:18px 0 10px; flex-wrap:wrap; }
+.login-link { display:inline-flex; align-items:center; justify-content:center; width:48px; height:48px; border-radius:50%; background:linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0.05)); border:1px solid rgba(255,255,255,0.14); color:#f6e7c8; text-decoration:none; box-shadow:0 10px 24px rgba(0,0,0,0.18); transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.login-link:hover { transform:translateY(-2px) scale(1.04); border-color:rgba(255,215,0,0.4); box-shadow:0 14px 28px rgba(0,0,0,0.24); }
+.login-link-svg { width:22px; height:22px; display:block; }
+.mule-icon { width:20px; height:20px; }
+.telegram-icon { color:#7fd6ff; }
+.discord-icon { color:#c7b9ff; }
 .input-group { display:flex; flex-direction:column; gap:4px; }
 .input-group label { font-size:11px; color:var(--text-dim); }
 .input-group input { padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.06); color:var(--text); font-size:15px; outline:none; transition:border .2s; }
@@ -910,9 +1345,9 @@ html, body {
 .btn-rules { width:100%; padding:8px; border:1px solid rgba(255,255,255,0.12); border-radius:10px; background:transparent; color:var(--text-dim); font-size:13px; cursor:pointer; transition:border-color .2s; }
 .btn-rules:hover { border-color:var(--gold); color:var(--gold); }
 .rules-modal { max-height:80vh; }
-.rules-content { text-align:left; font-size:13px; color:var(--text); line-height:1.7; margin-bottom:14px; max-height:50vh; overflow-y:auto; }
-.rules-content p { margin-bottom:8px; }
-.rules-content p:empty { margin-bottom:4px; }
+.rules-content { text-align:left; font-size:13px; color:var(--text); line-height:1.8; margin-bottom:14px; max-height:60vh; overflow-y:auto; padding:10px 0; }
+.rules-content p { margin:10px 0; padding:0 8px; }
+.rules-content p:empty { display:none; }
 /* Wallet modal */
 .wallet-modal { max-height:85vh; }
 .wallet-options { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
@@ -922,7 +1357,6 @@ html, body {
 .wallet-opt-icon { font-size:24px; }
 .wallet-opt-name { flex:1; font-weight:600; }
 .wallet-opt-chain { font-size:11px; color:var(--text-dim); padding:2px 8px; background:rgba(255,255,255,0.06); border-radius:4px; }
-.wallet-manual { margin-bottom:12px; display:flex; flex-direction:column; gap:8px; }
 .wallet-error { color:var(--red); font-size:12px; text-align:center; margin-bottom:8px; padding:6px; background:rgba(255,71,87,0.1); border-radius:6px; }
 
 /* Share button */
@@ -942,50 +1376,326 @@ html, body {
 .ci-chips { margin-left:auto; font-size:11px; color:var(--gold); }
 
 /* ===== GAME PAGE ===== */
-.game-page { background:#060c16; }
+.game-page {
+  background:
+    radial-gradient(circle at top, rgba(255,196,76,0.10), transparent 30%),
+    radial-gradient(circle at 20% 30%, rgba(64,153,255,0.12), transparent 28%),
+    linear-gradient(180deg, #07111d 0%, #08131e 42%, #050b14 100%);
+  position: relative;
+}
+.game-ambience {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ambience-glow {
+  position: absolute;
+  top: 10%;
+  width: 32vw;
+  height: 32vw;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: .35;
+}
+.ambience-glow.left {
+  left: -8vw;
+  background: radial-gradient(circle, rgba(79,172,254,0.6), transparent 70%);
+}
+.ambience-glow.right {
+  right: -8vw;
+  background: radial-gradient(circle, rgba(255,184,0,0.5), transparent 70%);
+}
+.ambience-mesh {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.55), transparent 70%);
+}
 .game-topbar {
   display:flex; align-items:center; gap:8px;
-  padding:4px 12px;
-  padding-top:max(4px,env(safe-area-inset-top));
+  padding:8px 12px;
+  padding-top:max(8px,env(safe-area-inset-top));
   padding-left:max(12px,env(safe-area-inset-left));
   padding-right:max(12px,env(safe-area-inset-right));
-  background:rgba(0,0,0,0.5); border-bottom:1px solid rgba(255,255,255,0.05);
+  background:rgba(8,14,24,0.72);
+  border-bottom:1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
   flex-shrink:0; min-height:0;
+  position: relative;
+  z-index: 2;
 }
-.btn-back { background:none; border:none; color:var(--text-dim); font-size:12px; cursor:pointer; padding:2px 6px; white-space:nowrap; }
-.room-code { font-size:10px; color:var(--gold); cursor:pointer; padding:2px 6px; background:rgba(255,215,0,0.1); border-radius:4px; border:1px solid rgba(255,215,0,0.2); white-space:nowrap; display:flex; align-items:center; gap:3px; }
-.topbar-center { display:flex; align-items:center; gap:4px; }
-.pot-label { font-size:10px; color:var(--text-dim); }
-.pot-value { font-size:18px; font-weight:800; color:var(--gold); text-shadow:0 0 8px rgba(255,215,0,0.3); }
-.topbar-meta { font-size:10px; color:var(--text-dim); display:flex; gap:8px; margin-left:auto; white-space:nowrap; }
-.topbar-chips { font-size:11px; color:var(--gold); display:flex; align-items:center; gap:2px; white-space:nowrap; }
+.btn-back {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 7px 10px;
+  border-radius: 999px;
+  white-space:nowrap;
+}
+.room-code {
+  font-size:10px;
+  color:var(--gold);
+  cursor:pointer;
+  padding:6px 10px;
+  background:rgba(255,215,0,0.08);
+  border-radius:999px;
+  border:1px solid rgba(255,215,0,0.2);
+  white-space:nowrap;
+  display:flex;
+  align-items:center;
+  gap:3px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.topbar-center {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  background: linear-gradient(180deg, rgba(255,215,0,0.10), rgba(255,215,0,0.04));
+  border: 1px solid rgba(255,215,0,0.18);
+  border-radius: 999px;
+  padding: 7px 12px;
+}
+.pot-label { font-size:10px; color:var(--text-dim); text-transform: uppercase; letter-spacing: .8px; }
+.pot-value { font-size:18px; font-weight:800; color:var(--gold); text-shadow:0 0 12px rgba(255,215,0,0.3); }
+.topbar-meta {
+  font-size:10px;
+  color:var(--text-dim);
+  display:flex;
+  gap:8px;
+  margin-left:auto;
+  white-space:nowrap;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+.topbar-chips {
+  font-size:11px;
+  color:var(--gold);
+  display:flex;
+  align-items:center;
+  gap:4px;
+  white-space:nowrap;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
 .topbar-actions { display:flex; align-items:center; gap:4px; flex-shrink:0; }
 
 /* ===== TABLE ===== */
-.table-container { flex:1; display:flex; align-items:center; justify-content:center; padding:4px; min-height:0; overflow:hidden; }
+.table-container {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:16px 8px 10px;
+  min-height:0;
+  overflow:hidden;
+  position: relative;
+  z-index: 1;
+}
 .table-felt {
   width:min(100%,540px); aspect-ratio:5/4;
   max-height:100%;
   border-radius:50%;
-  background:radial-gradient(ellipse at 50% 40%,#1f9960 0%,#157a48 30%,var(--felt) 55%,var(--felt-dark) 85%);
-  border:5px solid #4a3520;
-  box-shadow:0 0 0 2px #1a1208,0 0 0 6px #3a2810,0 0 0 8px rgba(0,0,0,0.3),0 0 30px rgba(0,0,0,0.5),inset 0 0 40px rgba(0,0,0,0.25),inset 0 -10px 30px rgba(0,0,0,0.15);
+  background:
+    radial-gradient(circle at 50% 46%, rgba(255,255,255,0.08), transparent 18%),
+    radial-gradient(ellipse at 50% 40%, #2aa56b 0%, #157a48 28%, var(--felt) 58%, #093923 100%);
+  border:6px solid #4d3620;
+  box-shadow:
+    0 0 0 2px #1a1208,
+    0 0 0 9px rgba(83,54,24,0.92),
+    0 30px 60px rgba(0,0,0,0.45),
+    inset 0 0 50px rgba(0,0,0,0.22),
+    inset 0 -14px 38px rgba(0,0,0,0.18);
   position:relative; overflow:visible;
 }
+.table-rail {
+  position: absolute;
+  inset: -18px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255,214,127,0.20), transparent 28%),
+    linear-gradient(135deg, #6a4b29, #3b2816 55%, #1e150d);
+  z-index: -2;
+  box-shadow: inset 0 2px 6px rgba(255,255,255,0.08), 0 18px 40px rgba(0,0,0,0.45);
+}
+.table-chip-bursts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.chip-burst {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.burst-chip {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 32%, rgba(255,255,255,0.45), transparent 28%),
+    linear-gradient(135deg, #ffe48a, #d8a214 70%, #8f6400);
+  border: 2px solid rgba(132, 92, 0, 0.78);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.22);
+  animation: chipFlyToPot .82s cubic-bezier(.18,.7,.18,1) forwards;
+}
+.burst-chip:nth-child(2n) { width: 16px; height: 16px; margin-left: -8px; margin-top: -8px; }
+.burst-chip:nth-child(3n) { width: 14px; height: 14px; margin-left: -7px; margin-top: -7px; }
+.table-inner-ring {
+  position: absolute;
+  inset: 26px;
+  border-radius: 50%;
+  border: 1px dashed rgba(241, 215, 136, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+.table-center-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -58%);
+  width: 118px;
+  height: 118px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at top, rgba(255,255,255,0.10), transparent 46%),
+    linear-gradient(180deg, rgba(8,31,23,0.78), rgba(5,16,12,0.94));
+  border: 1px solid rgba(255,215,0,0.18);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.26), inset 0 0 0 8px rgba(255,255,255,0.03);
+  z-index: 1;
+  animation: tableBadgePulse 4s ease-in-out infinite;
+}
+.table-badge-label {
+  font-size: 10px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+}
+.table-badge-value {
+  font-size: 24px;
+  line-height: 1.05;
+  color: var(--gold);
+  text-shadow: 0 0 16px rgba(255,215,0,0.22);
+}
+.table-badge-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.55);
+}
 .table-inner { position:absolute; inset:0; }
-.table-logo { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:16px; letter-spacing:5px; color:rgba(255,255,255,0.05); font-weight:800; pointer-events:none; text-transform:uppercase; }
-.table-pot-center { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); }
+.table-logo {
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,48px);
+  font-size:13px;
+  letter-spacing:6px;
+  color:rgba(255,255,255,0.06);
+  font-weight:800;
+  pointer-events:none;
+  text-transform:uppercase;
+}
+.table-pot-center { position:absolute; top:50%; left:50%; transform:translate(-50%,18px); }
 .pot-chips-stack { position:relative; display:flex; flex-direction:column; align-items:center; }
-.chip-stack { width:26px; height:26px; border-radius:50%; background:linear-gradient(135deg,var(--gold),#d4a800); border:2px solid #a67c00; position:absolute; box-shadow:0 1px 4px rgba(0,0,0,0.5); }
-.pot-amount { position:relative; top:30px; font-size:13px; font-weight:800; color:var(--gold); text-shadow:0 1px 6px rgba(0,0,0,0.9),0 0 10px rgba(255,215,0,0.3); white-space:nowrap; }
+.chip-stack {
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  background:
+    radial-gradient(circle at 35% 32%, rgba(255,255,255,0.4), transparent 28%),
+    linear-gradient(135deg, #ffe690, #d6a617 65%, #8f6500);
+  border:2px solid #a67c00;
+  position:absolute;
+  box-shadow:0 4px 10px rgba(0,0,0,0.42);
+  animation: chipFloat 2.8s ease-in-out infinite;
+}
+.pot-amount {
+  position:relative;
+  top:34px;
+  font-size:12px;
+  font-weight:800;
+  color:rgba(255,255,255,0.78);
+  text-shadow:0 1px 6px rgba(0,0,0,0.9);
+  white-space:nowrap;
+  animation: potAmountPulse 2.8s ease-in-out infinite;
+}
 
 /* Table players */
-.table-player { position:absolute; display:flex; flex-direction:column; align-items:center; gap:1px; z-index:10; transition:opacity .3s; }
+.table-player {
+  position:absolute;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:2px;
+  z-index:10;
+  transition:opacity .3s, transform .2s ease;
+  min-width: 76px;
+}
 .table-player.is-folded,.table-player.is-out { opacity:.35; }
+.table-player.is-turn { transform: translate(-50%,-52%); }
+.table-player.is-turn .tp-plaque {
+  background:
+    radial-gradient(circle at top, rgba(255,215,0,0.16), transparent 40%),
+    linear-gradient(180deg, rgba(20,29,16,0.82), rgba(9,23,37,0.42));
+  border-color: rgba(255,215,0,0.20);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 0 24px rgba(255,215,0,0.14);
+  animation: turnPlaquePulse 1.8s ease-in-out infinite;
+}
 
-.tp-avatar-wrap { position:relative; display:flex; align-items:center; justify-content:center; }
+.tp-plaque {
+  position: absolute;
+  top: 18px;
+  width: 88px;
+  height: 104px;
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(6,14,24,0.72), rgba(9,23,37,0.36));
+  border: 1px solid rgba(255,255,255,0.05);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  z-index: -1;
+}
+
+.tp-avatar-wrap {
+  position:relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width: 58px;
+  height: 58px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(5,11,19,0.88), rgba(12,25,40,0.70));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.26);
+}
 .tp-avatar { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:17px; position:relative; box-shadow:0 2px 10px rgba(0,0,0,0.5); border:2px solid rgba(255,255,255,0.15); }
-.table-player.is-turn .tp-avatar { border-color:var(--gold); box-shadow:0 0 12px rgba(255,215,0,0.4); }
+.table-player.is-turn .tp-avatar-wrap { border-color: rgba(255,215,0,0.28); box-shadow: 0 0 0 1px rgba(255,215,0,0.14), 0 10px 24px rgba(0,0,0,0.3); }
+.table-player.is-turn .tp-avatar { border-color:var(--gold); box-shadow:0 0 16px rgba(255,215,0,0.34); }
+.table-player.is-turn .tp-avatar::after {
+  content:'';
+  position:absolute;
+  inset:-7px;
+  border-radius:50%;
+  border:1px solid rgba(255,215,0,0.30);
+  animation: turnHalo 1.8s ease-out infinite;
+}
 .tp-bot { position:absolute; bottom:-2px; right:-4px; background:rgba(0,0,0,0.8); font-size:7px; padding:1px 4px; border-radius:3px; color:var(--accent); font-weight:600; }
 
 /* Opponent countdown ring */
@@ -996,12 +1706,44 @@ html, body {
 .tp-cd-num { position:absolute; bottom:-14px; font-size:10px; font-weight:700; color:var(--accent); background:rgba(0,0,0,0.7); padding:0 5px; border-radius:4px; white-space:nowrap; }
 .tp-cd-num.urgent { color:var(--red); animation:countdownPulse .5s ease-in-out infinite; }
 
-.tp-name { font-size:10px; font-weight:600; white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,0.8); margin-top:2px; }
-.tp-chips { font-size:9px; color:var(--gold); white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,0.8); display:flex; align-items:center; gap:1px; }
+.tp-name { font-size:10px; font-weight:700; white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,0.8); margin-top:3px; }
+.tp-chips {
+  font-size:9px;
+  color:var(--gold);
+  white-space:nowrap;
+  text-shadow:0 1px 3px rgba(0,0,0,0.8);
+  display:flex;
+  align-items:center;
+  gap:1px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(255,255,255,0.06);
+}
 .tp-chip-icon { font-size:9px; }
-.tp-bet { position:absolute; bottom:-20px; }
-.tp-bet span { background:rgba(255,215,0,0.15); color:var(--gold); font-size:9px; padding:2px 6px; border-radius:8px; border:1px solid rgba(255,215,0,0.25); white-space:nowrap; font-weight:600; }
-.tp-cards { display:flex; gap:2px; margin-top:1px; }
+.tp-bet { position:absolute; bottom:-22px; }
+.tp-bet span {
+  background:linear-gradient(180deg, rgba(255,215,0,0.18), rgba(255,215,0,0.08));
+  color:var(--gold);
+  font-size:9px;
+  padding:2px 7px;
+  border-radius:999px;
+  border:1px solid rgba(255,215,0,0.22);
+  white-space:nowrap;
+  font-weight:700;
+}
+.tp-cards {
+  display:flex;
+  gap:0;
+  margin-top:4px;
+  min-height: 30px;
+  justify-content: center;
+}
+.fan-card {
+  transform: translateX(var(--fan-shift, 0)) translateY(var(--fan-lift, 0)) rotate(var(--fan-rotate, 0));
+  transform-origin: bottom center;
+  transition: transform .25s ease, box-shadow .25s ease;
+}
 .mini-card { width:20px; height:28px; border-radius:3px; background:#fff; display:flex; align-items:center; justify-content:center; font-size:8px; font-weight:700; color:#333; box-shadow:0 1px 2px rgba(0,0,0,0.3); }
 .mini-card.heart,.mini-card.diamond { color:var(--red); }
 .mini-card.back { background:linear-gradient(135deg,#1a3a5c 25%,#0d2840 25%,#0d2840 50%,#1a3a5c 50%,#1a3a5c 75%,#0d2840 75%); background-size:6px 6px; }
@@ -1010,21 +1752,45 @@ html, body {
 .tp-status.out { background:rgba(100,100,100,0.3); color:#888; }
 
 /* Event log */
-.game-log { display:flex; gap:6px; padding:3px 12px; overflow-x:auto; background:rgba(0,0,0,0.3); flex-shrink:0; scrollbar-width:none; }
+.game-log {
+  display:flex;
+  gap:6px;
+  padding:6px 12px;
+  overflow-x:auto;
+  background:rgba(5,10,18,0.62);
+  border-top:1px solid rgba(255,255,255,0.04);
+  border-bottom:1px solid rgba(255,255,255,0.04);
+  flex-shrink:0;
+  scrollbar-width:none;
+  position: relative;
+  z-index: 1;
+}
 .game-log::-webkit-scrollbar { display:none; }
-.log-item { font-size:10px; color:var(--text-dim); white-space:nowrap; padding:2px 6px; background:rgba(255,255,255,0.04); border-radius:8px; flex-shrink:0; }
+.log-item {
+  font-size:10px;
+  color:var(--text-dim);
+  white-space:nowrap;
+  padding:4px 8px;
+  background:rgba(255,255,255,0.05);
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,0.05);
+  flex-shrink:0;
+}
 
 /* ===== MY PANEL ===== */
 .my-panel {
-  background:linear-gradient(180deg, rgba(10,15,30,0.95) 0%, rgba(8,12,24,0.98) 100%);
+  background:
+    radial-gradient(circle at top, rgba(255,215,0,0.08), transparent 45%),
+    linear-gradient(180deg, rgba(10,15,30,0.96) 0%, rgba(8,12,24,0.99) 100%);
   border-top:1px solid rgba(255,255,255,0.08);
-  padding:6px 12px;
+  box-shadow: 0 -14px 36px rgba(0,0,0,0.28);
+  padding:10px 12px 8px;
   padding-left:max(12px,env(safe-area-inset-left));
   padding-right:max(12px,env(safe-area-inset-right));
-  padding-bottom:max(6px,env(safe-area-inset-bottom));
+  padding-bottom:max(8px,env(safe-area-inset-bottom));
   flex-shrink:0; overflow:hidden;
 }
-.my-info-row { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+.my-info-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
 
 .my-avatar-wrap { position:relative; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .my-countdown-ring { position:absolute; inset:-4px; width:48px; height:48px; transform:rotate(-90deg); pointer-events:none; }
@@ -1034,20 +1800,119 @@ html, body {
 .my-cd-num { position:absolute; top:-10px; right:-14px; font-size:10px; font-weight:700; color:var(--accent); background:rgba(0,0,0,0.8); padding:1px 4px; border-radius:4px; white-space:nowrap; }
 .my-cd-num.urgent { color:var(--red); animation:countdownPulse .5s ease-in-out infinite; }
 
-.my-avatar { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:15px; position:relative; border:2px solid rgba(255,255,255,0.15); }
-.my-detail { display:flex; align-items:center; gap:10px; }
-.my-name { font-weight:600; font-size:14px; }
+.my-avatar {
+  width:38px;
+  height:38px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  font-weight:700;
+  font-size:15px;
+  position:relative;
+  border:2px solid rgba(255,255,255,0.15);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+}
+.my-detail {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+.my-name { font-weight:700; font-size:14px; }
 .my-chips { font-size:13px; color:var(--gold); display:flex; align-items:center; gap:2px; }
 .my-chip-icon { font-size:12px; }
-.my-bet-info { margin-left:auto; font-size:11px; color:var(--text-dim); background:rgba(255,255,255,0.04); padding:2px 8px; border-radius:6px; }
+.my-bet-info {
+  margin-left:auto;
+  font-size:11px;
+  color:var(--text-dim);
+  background:rgba(255,255,255,0.04);
+  padding:6px 10px;
+  border-radius:999px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
 
 @keyframes countdownPulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.15);} }
+@keyframes tableBadgePulse {
+  0%,100% { box-shadow: 0 10px 40px rgba(0,0,0,0.26), inset 0 0 0 8px rgba(255,255,255,0.03); }
+  50% { box-shadow: 0 14px 48px rgba(0,0,0,0.3), 0 0 24px rgba(255,215,0,0.10), inset 0 0 0 8px rgba(255,255,255,0.04); }
+}
+@keyframes chipFloat {
+  0%,100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-2px) rotate(4deg); }
+}
+@keyframes potAmountPulse {
+  0%,100% { opacity: .82; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-1px); }
+}
+@keyframes turnPlaquePulse {
+  0%,100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 0 24px rgba(255,215,0,0.14); }
+  50% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 30px rgba(255,215,0,0.22); }
+}
+@keyframes turnHalo {
+  0% { transform: scale(.92); opacity: .0; }
+  20% { opacity: .55; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+@keyframes chipFlyToPot {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(.45) rotate(0deg);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(calc(var(--chip-dx) * 0.18), calc(var(--chip-dy) * 0.18 - 6px)) scale(1) rotate(90deg);
+  }
+  72% {
+    opacity: 1;
+    transform: translate(calc(var(--chip-dx) * 0.82), calc(var(--chip-dy) * 0.82 - 10px)) scale(.92) rotate(220deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--chip-dx), var(--chip-dy)) scale(.48) rotate(300deg);
+  }
+}
 
 /* Hand */
-.my-hand { display:flex; gap:5px; justify-content:center; margin-bottom:3px; }
-.game-card { width:50px; height:72px; border-radius:6px; background:#fff; position:relative; box-shadow:0 2px 8px rgba(0,0,0,0.4); animation:dealCard .3s ease backwards; cursor:default; transition:transform .1s; }
+.my-hand { display:flex; gap:7px; justify-content:center; margin-bottom:5px; min-height: 76px; }
+.game-card {
+  width:50px;
+  height:72px;
+  border-radius:9px;
+  background:#fff;
+  position:relative;
+  box-shadow:0 10px 24px rgba(0,0,0,0.32);
+  animation:dealCard .36s cubic-bezier(.2,.7,.2,1) backwards;
+  cursor:default;
+  transition:transform .14s ease, box-shadow .14s ease;
+  border: 1px solid rgba(0,0,0,0.08);
+}
 .game-card:active { transform:translateY(-3px); }
-@keyframes dealCard { from{transform:translateY(30px) rotate(8deg);opacity:0;} }
+.game-card:hover { transform:translateY(-5px) rotate(var(--hand-rotate, 0)); box-shadow:0 14px 26px rgba(0,0,0,0.36); }
+@keyframes dealCard { from{transform:translateY(30px) rotate(8deg) scale(.94);opacity:0;} }
+.fanned-game-card {
+  transform: translateX(var(--hand-shift, 0)) translateY(var(--hand-lift, 0)) rotate(var(--hand-rotate, 0));
+  transform-origin: bottom center;
+}
+.my-hand .fanned-game-card {
+  animation:
+    dealCard .36s cubic-bezier(.2,.7,.2,1) backwards,
+    handHoverIdle 4.2s ease-in-out infinite;
+}
+.my-hand .fanned-game-card:nth-child(2) {
+  animation-delay: var(--card-deal-delay, 0s), .12s;
+}
+.my-hand .fanned-game-card:nth-child(3) {
+  animation-delay: var(--card-deal-delay, 0s), .24s;
+}
+@keyframes handHoverIdle {
+  0%,100% { filter: drop-shadow(0 8px 18px rgba(0,0,0,0.12)); }
+  50% { filter: drop-shadow(0 12px 22px rgba(0,0,0,0.20)); }
+}
 .gc-corner { position:absolute; display:flex; flex-direction:column; align-items:center; line-height:1; }
 .gc-corner.top { top:3px; left:5px; }
 .gc-corner.bottom { bottom:3px; right:5px; transform:rotate(180deg); }
@@ -1058,16 +1923,65 @@ html, body {
 .game-card.diamond .gc-value,.game-card.diamond .gc-suit,.game-card.diamond .gc-center { color:var(--red); }
 .game-card.spade .gc-value,.game-card.spade .gc-suit,.game-card.spade .gc-center,
 .game-card.club .gc-value,.game-card.club .gc-suit,.game-card.club .gc-center { color:#222; }
-.game-card.card-back { background:#1a2a44; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-direction:column; }
-.card-back-pattern { position:absolute; inset:3px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); background:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,0.03) 3px,rgba(255,255,255,0.03) 6px); }
+.game-card.card-back {
+  background:
+    radial-gradient(circle at top, rgba(255,255,255,0.10), transparent 42%),
+    linear-gradient(180deg, #1a2a44, #102136);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+}
+.card-back-pattern {
+  position:absolute;
+  inset:3px;
+  border-radius:6px;
+  border:1px solid rgba(255,255,255,0.12);
+  background:
+    radial-gradient(circle at center, rgba(255,215,0,0.08), transparent 38%),
+    repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,0.04) 3px,rgba(255,255,255,0.04) 6px);
+}
 .peek-label { position:relative; z-index:1; font-size:10px; color:rgba(255,255,255,0.5); font-weight:600; }
-.hand-rank { text-align:center; font-size:12px; color:var(--gold); font-weight:700; margin-bottom:4px; letter-spacing:2px; }
+.hand-rank {
+  text-align:center;
+  font-size:12px;
+  color:var(--gold);
+  font-weight:700;
+  margin-bottom:8px;
+  letter-spacing:2px;
+  text-shadow: 0 0 10px rgba(255,215,0,0.22);
+}
 
 /* Action bar */
-.action-bar { display:flex; gap:6px; justify-content:center; flex-wrap:nowrap; padding:2px 0; }
-.act-btn { display:flex; flex-direction:column; align-items:center; gap:1px; padding:8px 14px; border-radius:10px; border:none; font-size:11px; font-weight:600; cursor:pointer; min-width:52px; transition:transform .08s, box-shadow .15s; color:#fff; position:relative; overflow:hidden; }
+.action-bar {
+  display:flex;
+  gap:8px;
+  justify-content:center;
+  flex-wrap:nowrap;
+  padding:4px 0 2px;
+}
+.act-btn {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:2px;
+  padding:10px 14px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,0.10);
+  font-size:11px;
+  font-weight:700;
+  cursor:pointer;
+  min-width:56px;
+  transition:transform .08s, box-shadow .15s, filter .15s;
+  color:#fff;
+  position:relative;
+  overflow:hidden;
+  backdrop-filter: blur(10px);
+}
 .act-btn::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 50%); pointer-events:none; }
 .act-btn:active { transform:scale(.92); }
+.act-btn:hover { filter: brightness(1.03); }
 .act-btn .act-icon { font-size:16px; line-height:1; }
 .act-btn .act-label { font-size:10px; opacity:.9; }
 .act-btn small { font-size:9px; opacity:.7; }
@@ -1078,7 +1992,11 @@ html, body {
 .act-btn.allin { background:linear-gradient(180deg,#e74c3c,#b83227); box-shadow:0 2px 8px rgba(231,76,60,0.3); animation:allInGlow 2s ease-in-out infinite; }
 @keyframes allInGlow { 0%,100%{box-shadow:0 2px 8px rgba(231,76,60,0.3);} 50%{box-shadow:0 2px 16px rgba(231,76,60,0.6);} }
 
-.waiting-bar { text-align:center; padding:4px 0; }
+.waiting-bar { text-align:center; padding:6px 0; }
+.waiting-basebet { display:flex; flex-direction:column; gap:8px; align-items:center; margin-bottom:10px; }
+.waiting-basebet-label, .waiting-readonly, .spectator-banner { font-size:12px; color:var(--text-dim); }
+.waiting-readonly { margin-bottom:10px; }
+.spectator-banner { text-align:center; padding:8px 12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:10px; margin-bottom:10px; }
 .btn-start { padding:10px 36px; border:none; border-radius:10px; background:linear-gradient(135deg,var(--gold),#ff8c00); color:#000; font-size:15px; font-weight:700; cursor:pointer; }
 
 /* Result overlay */
@@ -1117,6 +2035,9 @@ html, body {
 @media (max-width:480px) and (orientation:portrait) {
   .game-topbar { gap:4px; padding:3px 8px; flex-wrap:wrap; }
   .topbar-meta { margin-left:0; }
+  .table-center-badge { width: 96px; height: 96px; transform: translate(-50%, -58%); }
+  .table-badge-value { font-size: 20px; }
+  .table-badge-meta { font-size: 9px; }
   .table-felt { width:min(100%,85vw); }
   .game-card { width:44px; height:64px; }
   .gc-value { font-size:12px; }
@@ -1139,6 +2060,9 @@ html, body {
 @media (max-height:440px) and (orientation:landscape) {
   .game-topbar { padding:2px 10px; gap:6px; }
   .pot-value { font-size:15px; }
+  .table-center-badge { width: 86px; height: 86px; transform: translate(-50%, -58%); }
+  .table-badge-value { font-size: 17px; }
+  .table-badge-label, .table-badge-meta { font-size: 8px; }
   .table-felt { width:min(100%,42vh); border-width:3px; }
   .table-logo { font-size:12px; }
   .tp-avatar { width:30px; height:30px; font-size:12px; }
@@ -1175,6 +2099,7 @@ html, body {
 /* ===== MEDIUM LANDSCAPE ===== */
 @media (max-height:600px) and (min-height:441px) and (orientation:landscape) {
   .table-felt { width:min(100%,50vh); }
+  .table-center-badge { width: 96px; height: 96px; }
   .game-card { width:46px; height:66px; }
   .gc-value { font-size:12px; }
   .gc-center { font-size:18px; }
@@ -1187,6 +2112,8 @@ html, body {
 /* ===== TABLET / DESKTOP ===== */
 @media (min-width:768px) {
   .table-felt { width:min(100%,650px); }
+  .table-center-badge { width: 132px; height: 132px; }
+  .table-badge-value { font-size: 28px; }
   .game-card { width:60px; height:86px; }
   .gc-value { font-size:16px; }
   .gc-center { font-size:28px; }
@@ -1205,6 +2132,8 @@ html, body {
 
 @media (min-width:1024px) {
   .table-felt { width:min(100%,750px); }
+  .table-center-badge { width: 144px; height: 144px; }
+  .table-badge-value { font-size: 32px; }
   .game-card { width:68px; height:96px; }
   .gc-value { font-size:18px; }
   .gc-center { font-size:32px; }
@@ -1225,5 +2154,8 @@ html, body {
   .logo-a { font-size:22px; }
   .game-title { font-size:20px; letter-spacing:4px; }
   .logo { margin-bottom:16px; }
+  .login-links { gap:10px; margin-top:14px; }
+  .login-link { width:44px; height:44px; }
+  .login-link-svg { width:20px; height:20px; }
 }
 </style>

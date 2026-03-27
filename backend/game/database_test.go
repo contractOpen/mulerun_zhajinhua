@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 var testDBCounter int64
@@ -49,8 +50,8 @@ func TestGetOrCreateUser_New(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateUser failed: %v", err)
 	}
-	if chips != 1000 {
-		t.Errorf("new user should have 1000 chips, got %d", chips)
+	if chips != 1500 {
+		t.Errorf("new user should have 1500 chips including signup bonus, got %d", chips)
 	}
 }
 
@@ -106,14 +107,14 @@ func TestRechargeUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RechargeUser failed: %v", err)
 	}
-	if newChips != 1500 {
-		t.Errorf("expected 1500 chips after recharge, got %d", newChips)
+	if newChips != 2000 {
+		t.Errorf("expected 2000 chips after recharge, got %d", newChips)
 	}
 
 	// Verify via direct query
 	chips, _ := GetOrCreateUser("player1", "Alice")
-	if chips != 1500 {
-		t.Errorf("expected 1500 chips in DB, got %d", chips)
+	if chips != 2000 {
+		t.Errorf("expected 2000 chips in DB, got %d", chips)
 	}
 
 	// Verify transaction recorded
@@ -135,8 +136,8 @@ func TestClaimDailyBonus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first claim failed: %v", err)
 	}
-	if newChips != 1500 {
-		t.Errorf("expected 1500 chips after first bonus, got %d", newChips)
+	if newChips != 2000 {
+		t.Errorf("expected 2000 chips after first bonus, got %d", newChips)
 	}
 	if remaining != 2 {
 		t.Errorf("expected 2 remaining claims, got %d", remaining)
@@ -147,8 +148,8 @@ func TestClaimDailyBonus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second claim failed: %v", err)
 	}
-	if newChips != 2000 {
-		t.Errorf("expected 2000 chips after second bonus, got %d", newChips)
+	if newChips != 2500 {
+		t.Errorf("expected 2500 chips after second bonus, got %d", newChips)
 	}
 	if remaining != 1 {
 		t.Errorf("expected 1 remaining claim, got %d", remaining)
@@ -159,11 +160,62 @@ func TestClaimDailyBonus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third claim failed: %v", err)
 	}
-	if newChips != 2500 {
-		t.Errorf("expected 2500 chips after third bonus, got %d", newChips)
+	if newChips != 3000 {
+		t.Errorf("expected 3000 chips after third bonus, got %d", newChips)
 	}
 	if remaining != 0 {
 		t.Errorf("expected 0 remaining claims, got %d", remaining)
+	}
+}
+
+func TestSignupBonusDoesNotConsumeDailyClaims(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	chips, err := GetOrCreateUser("player1", "Alice")
+	if err != nil {
+		t.Fatalf("GetOrCreateUser failed: %v", err)
+	}
+	if chips != 1500 {
+		t.Fatalf("expected signup bonus chips to be 1500, got %d", chips)
+	}
+
+	claimed, remaining, canClaim, err := GetDailyBonusStatus("player1")
+	if err != nil {
+		t.Fatalf("GetDailyBonusStatus failed: %v", err)
+	}
+	if claimed != 0 {
+		t.Fatalf("expected signup bonus not to count as daily claim, got %d", claimed)
+	}
+	if remaining != 3 || !canClaim {
+		t.Fatalf("expected 3 daily claims remaining, got remaining=%d canClaim=%v", remaining, canClaim)
+	}
+}
+
+func TestDailyBonusStatusUsesUTCDay(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, _ = GetOrCreateUser("player1", "Alice")
+
+	yesterdayUTC := utcNow().Add(-24 * time.Hour)
+	_, err := DB.Exec(
+		"INSERT INTO daily_bonus (player_id, claimed_at, amount, bonus_type) VALUES (?, ?, ?, ?)",
+		"player1", yesterdayUTC, 500, "daily",
+	)
+	if err != nil {
+		t.Fatalf("failed to seed previous UTC day bonus: %v", err)
+	}
+
+	claimed, remaining, canClaim, err := GetDailyBonusStatus("player1")
+	if err != nil {
+		t.Fatalf("GetDailyBonusStatus failed: %v", err)
+	}
+	if claimed != 0 {
+		t.Fatalf("expected previous UTC day claim not to count today, got %d", claimed)
+	}
+	if remaining != 3 || !canClaim {
+		t.Fatalf("expected full daily claims after UTC rollover, got remaining=%d canClaim=%v", remaining, canClaim)
 	}
 }
 
@@ -202,21 +254,22 @@ func TestSettleGame(t *testing.T) {
 	}
 
 	// Check winner chips: 1000 + 500 = 1500
+	// New users start with 1500 because signup bonus does not consume daily claims.
 	winnerChips, _ := GetOrCreateUser("winner1", "Winner")
-	if winnerChips != 1500 {
-		t.Errorf("expected winner chips 1500, got %d", winnerChips)
+	if winnerChips != 2000 {
+		t.Errorf("expected winner chips 2000, got %d", winnerChips)
 	}
 
-	// Check loser1 chips: 1000 - 200 = 800
+	// Check loser1 chips: 1500 - 200 = 1300
 	loser1Chips, _ := GetOrCreateUser("loser1", "Loser1")
-	if loser1Chips != 800 {
-		t.Errorf("expected loser1 chips 800, got %d", loser1Chips)
+	if loser1Chips != 1300 {
+		t.Errorf("expected loser1 chips 1300, got %d", loser1Chips)
 	}
 
-	// Check loser2 chips: 1000 - 300 = 700
+	// Check loser2 chips: 1500 - 300 = 1200
 	loser2Chips, _ := GetOrCreateUser("loser2", "Loser2")
-	if loser2Chips != 700 {
-		t.Errorf("expected loser2 chips 700, got %d", loser2Chips)
+	if loser2Chips != 1200 {
+		t.Errorf("expected loser2 chips 1200, got %d", loser2Chips)
 	}
 
 	// Check transactions recorded
@@ -332,6 +385,7 @@ func TestSubmitRecharge(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
+	_, _ = GetOrCreateUser("player1", "Alice")
 	err := SubmitRecharge("player1", "0xabc123", "evm", 100, 1000)
 	if err != nil {
 		t.Fatalf("SubmitRecharge failed: %v", err)
@@ -349,6 +403,7 @@ func TestSubmitRecharge_DuplicateTxHash(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
+	_, _ = GetOrCreateUser("player1", "Alice")
 	_ = SubmitRecharge("player1", "0xdup", "evm", 100, 1000)
 	err := SubmitRecharge("player1", "0xdup", "evm", 200, 2000)
 	if err == nil {
@@ -360,7 +415,7 @@ func TestConfirmRecharge(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
-	_, _ = GetOrCreateUser("player1", "Alice") // 1000 chips
+	_, _ = GetOrCreateUser("player1", "Alice") // 1500 chips including signup bonus
 	_ = SubmitRecharge("player1", "0xtx1", "evm", 50, 500)
 
 	playerID, points, err := ConfirmRecharge("0xtx1")
@@ -376,8 +431,8 @@ func TestConfirmRecharge(t *testing.T) {
 
 	// Check chips updated
 	chips, _ := GetOrCreateUser("player1", "Alice")
-	if chips != 1500 {
-		t.Errorf("expected 1500 chips after confirm, got %d", chips)
+	if chips != 2000 {
+		t.Errorf("expected 2000 chips after confirm, got %d", chips)
 	}
 
 	// Check status updated

@@ -1,7 +1,13 @@
 package handler
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"testing"
+
+	"github.com/btcsuite/btcutil/base58"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestValidateWalletAddress_EVM(t *testing.T) {
@@ -126,4 +132,68 @@ func TestDetectChain_Unknown(t *testing.T) {
 	if chain != "" {
 		t.Errorf("expected empty string for unknown, got %q", chain)
 	}
+}
+
+func TestVerifyWalletSignature_EVM(t *testing.T) {
+	privKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	address := crypto.PubkeyToAddress(privKey.PublicKey).Hex()
+	nonce := "testnonce123"
+	message := BuildAuthMessage(address, ChainEVM, nonce)
+	hash := crypto.Keccak256(prefixedEVMMessage([]byte(message)))
+	sig, err := crypto.Sign(hash, privKey)
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+	sig[64] += 27
+
+	if err := VerifyWalletSignature(address, ChainEVM, message, "0x"+commonBytesToHex(sig)); err != nil {
+		t.Fatalf("VerifyWalletSignature failed: %v", err)
+	}
+}
+
+func TestVerifyWalletSignature_SOL(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	address := base58.Encode(pub)
+	message := BuildAuthMessage(address, ChainSOL, "solnonce123")
+	sig := ed25519.Sign(priv, []byte(message))
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	if err := VerifyWalletSignature(address, ChainSOL, message, sigB64); err != nil {
+		t.Fatalf("VerifyWalletSignature failed: %v", err)
+	}
+}
+
+func TestVerifyWalletSignature_InvalidSignature(t *testing.T) {
+	privKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	address := crypto.PubkeyToAddress(privKey.PublicKey).Hex()
+	message := BuildAuthMessage(address, ChainEVM, "nonce")
+	hash := crypto.Keccak256(prefixedEVMMessage([]byte("tampered")))
+	sig, err := crypto.Sign(hash, privKey)
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+	sig[64] += 27
+
+	if err := VerifyWalletSignature(address, ChainEVM, message, "0x"+commonBytesToHex(sig)); err == nil {
+		t.Fatal("expected invalid signature verification to fail")
+	}
+}
+
+func commonBytesToHex(b []byte) string {
+	const hextable = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = hextable[v>>4]
+		out[i*2+1] = hextable[v&0x0f]
+	}
+	return string(out)
 }

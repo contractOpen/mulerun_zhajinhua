@@ -17,6 +17,7 @@ const translations = {
     'login.nickname': '游戏昵称',
     'login.nicknamePlaceholder': '输入你的昵称',
     'login.connectWallet': '连接钱包',
+    'login.authenticate': '授权登录',
     'login.enter': '进入大厅',
     'login.connecting': '连接服务器中...',
     'login.footer': 'Powered by Blockchain',
@@ -54,6 +55,9 @@ const translations = {
     'lobby.bonusClaimed': '成功领取 {amount} 积分，剩余 {remaining} 次',
     'lobby.noBonusLeft': '今日奖励已领完',
     'lobby.bonusRemaining': '今日剩余 {n} 次',
+    'lobby.claimBonusBtn': '领取',
+    'lobby.rechargeBtn': '充值',
+    'lobby.recharge': '充值积分',
 
     // Game
     'game.leave': '离开',
@@ -70,6 +74,10 @@ const translations = {
     'game.selectCompareTarget': '选择比牌对象',
     'game.timeLeft': '倒计时',
     'game.autoFold': '超时自动弃牌',
+    'game.spectating': '观战中，当前不能操作，也不会发牌给你',
+    'game.ownerOnlyStart': '仅房主可开始游戏',
+    'game.spectators': '观战 {n}',
+    'game.anteLabel': '底注',
 
     // Actions
     'action.fold': '弃牌',
@@ -112,6 +120,7 @@ const translations = {
     'hand.straight': '顺子',
     'hand.pair': '对子',
     'hand.highCard': '散牌',
+    'hand.unknown': '未知',
 
     // Toast / errors
     'toast.roomCodeCopied': '房间码已复制',
@@ -121,6 +130,25 @@ const translations = {
     'toast.connectionError': '连接失败',
     'toast.rotatePhone': '请旋转手机至横屏模式',
     'error.allInOnly': '有人全押，只能弃牌或全押',
+    'notice.authExpired': '登录状态已过期，请重新授权',
+    'notice.lowChipsAutoClaim': '筹码低于 50，正在自动领取今日赠送积分',
+    'notice.lowChipsExhausted': '筹码低于 50，但今日赠送次数已用完，请充值',
+    'notice.lowChipsClaimed': '筹码不足，已自动领取赠送积分',
+    'notice.walletAuthFailed': '钱包签名认证失败',
+    'wallet.connectTitle': '连接钱包',
+    'wallet.connectDescription': '选择要连接的钱包',
+    'wallet.connectTonDescription': '连接你的 TON 钱包以继续',
+    'wallet.metamask': 'MetaMask',
+    'wallet.phantom': 'Phantom',
+    'wallet.telegramWallet': 'Telegram 钱包',
+    'wallet.tonkeeper': 'Tonkeeper',
+    'wallet.otherTonWallets': '其他 TON 钱包',
+    'wallet.recommended': '推荐',
+    'wallet.allWallets': '全部',
+    'wallet.tonAddress': 'TON 地址',
+    'wallet.useAddressWithoutAuth': '无需授权，直接使用地址',
+    'wallet.connectedTon': 'TON 钱包已连接',
+    'wallet.invalidTonAddress': 'TON 地址格式无效',
 
     // Common
     'common.cancel': '取消',
@@ -135,6 +163,7 @@ const translations = {
     'login.nickname': 'Nickname',
     'login.nicknamePlaceholder': 'Enter your nickname',
     'login.connectWallet': 'Connect Wallet',
+    'login.authenticate': 'Authenticate',
     'login.enter': 'Enter Lobby',
     'login.connecting': 'Connecting to server...',
     'login.footer': 'Powered by Blockchain',
@@ -172,6 +201,9 @@ const translations = {
     'lobby.bonusClaimed': 'Claimed {amount} points, {remaining} claims left',
     'lobby.noBonusLeft': 'No bonus remaining today',
     'lobby.bonusRemaining': '{n} claims left today',
+    'lobby.claimBonusBtn': 'Claim',
+    'lobby.rechargeBtn': 'Recharge',
+    'lobby.recharge': 'Buy Chips',
 
     // Game
     'game.leave': 'Leave',
@@ -188,6 +220,10 @@ const translations = {
     'game.selectCompareTarget': 'Choose opponent to compare',
     'game.timeLeft': 'Time',
     'game.autoFold': 'Auto-fold on timeout',
+    'game.spectating': 'Spectating. You cannot act and will not receive cards.',
+    'game.ownerOnlyStart': 'Only the room owner can start the game',
+    'game.spectators': 'Spectators {n}',
+    'game.anteLabel': 'Ante',
 
     // Actions
     'action.fold': 'Fold',
@@ -230,6 +266,7 @@ const translations = {
     'hand.straight': 'Straight',
     'hand.pair': 'Pair',
     'hand.highCard': 'High Card',
+    'hand.unknown': 'Unknown',
 
     // Toast / errors
     'toast.roomCodeCopied': 'Room code copied',
@@ -239,6 +276,25 @@ const translations = {
     'toast.connectionError': 'Connection failed',
     'toast.rotatePhone': 'Please rotate your phone to landscape mode',
     'error.allInOnly': 'Someone went all in — you must fold or go all in',
+    'notice.authExpired': 'Your session expired. Please authenticate again.',
+    'notice.lowChipsAutoClaim': 'Chips below 50. Claiming your daily bonus automatically.',
+    'notice.lowChipsExhausted': 'Chips below 50, but today\'s free bonus has been used up. Please recharge.',
+    'notice.lowChipsClaimed': 'Low chips detected. Daily bonus claimed automatically.',
+    'notice.walletAuthFailed': 'Wallet signature authentication failed',
+    'wallet.connectTitle': 'Connect Wallet',
+    'wallet.connectDescription': 'Choose your wallet to connect',
+    'wallet.connectTonDescription': 'Connect your TON wallet to continue',
+    'wallet.metamask': 'MetaMask',
+    'wallet.phantom': 'Phantom',
+    'wallet.telegramWallet': 'Telegram Wallet',
+    'wallet.tonkeeper': 'Tonkeeper',
+    'wallet.otherTonWallets': 'Other TON Wallets',
+    'wallet.recommended': 'Recommended',
+    'wallet.allWallets': 'All',
+    'wallet.tonAddress': 'TON Address',
+    'wallet.useAddressWithoutAuth': 'Use address without authorization',
+    'wallet.connectedTon': 'TON wallet connected',
+    'wallet.invalidTonAddress': 'Invalid TON address format',
 
     // Common
     'common.cancel': 'Cancel',
@@ -253,6 +309,7 @@ const translations = {
     'login.nickname': 'Игровое имя',
     'login.nicknamePlaceholder': 'Введите ваш никнейм',
     'login.connectWallet': 'Подключить кошелёк',
+    'login.authenticate': 'Войти',
     'login.enter': 'Войти в лобби',
     'login.connecting': 'Подключение к серверу...',
     'login.footer': 'Powered by Blockchain',
@@ -306,6 +363,10 @@ const translations = {
     'game.selectCompareTarget': 'Выберите соперника для сравнения',
     'game.timeLeft': 'Время',
     'game.autoFold': 'Автосброс по таймауту',
+    'game.spectating': 'Режим наблюдения: действия недоступны, карты не раздаются.',
+    'game.ownerOnlyStart': 'Только владелец комнаты может начать игру',
+    'game.spectators': 'Зрители {n}',
+    'game.anteLabel': 'Анте',
 
     // Actions
     'action.fold': 'Пас',
@@ -348,6 +409,7 @@ const translations = {
     'hand.straight': 'Стрит',
     'hand.pair': 'Пара',
     'hand.highCard': 'Старшая карта',
+    'hand.unknown': 'Неизвестно',
 
     // Toast / errors
     'toast.roomCodeCopied': 'Код комнаты скопирован',
@@ -357,6 +419,25 @@ const translations = {
     'toast.connectionError': 'Ошибка подключения',
     'toast.rotatePhone': 'Поверните телефон в горизонтальное положение',
     'error.allInOnly': 'Кто-то пошёл ва-банк — можно только сбросить или идти ва-банк',
+    'notice.authExpired': 'Сессия истекла. Пожалуйста, войдите снова.',
+    'notice.lowChipsAutoClaim': 'Фишек меньше 50. Автоматически забираем ежедневный бонус.',
+    'notice.lowChipsExhausted': 'Фишек меньше 50, но дневной бонус уже исчерпан. Пополните баланс.',
+    'notice.lowChipsClaimed': 'Обнаружено мало фишек. Ежедневный бонус получен автоматически.',
+    'notice.walletAuthFailed': 'Ошибка подписи кошелька',
+    'wallet.connectTitle': 'Подключить кошелёк',
+    'wallet.connectDescription': 'Выберите кошелёк для подключения',
+    'wallet.connectTonDescription': 'Подключите TON-кошелёк, чтобы продолжить',
+    'wallet.metamask': 'MetaMask',
+    'wallet.phantom': 'Phantom',
+    'wallet.telegramWallet': 'Telegram Wallet',
+    'wallet.tonkeeper': 'Tonkeeper',
+    'wallet.otherTonWallets': 'Другие TON-кошельки',
+    'wallet.recommended': 'Рекомендуется',
+    'wallet.allWallets': 'Все',
+    'wallet.tonAddress': 'TON-адрес',
+    'wallet.useAddressWithoutAuth': 'Использовать адрес без авторизации',
+    'wallet.connectedTon': 'TON-кошелёк подключён',
+    'wallet.invalidTonAddress': 'Неверный формат TON-адреса',
 
     // Common
     'common.cancel': 'Отмена',
@@ -371,6 +452,7 @@ const translations = {
     'login.nickname': 'Apodo',
     'login.nicknamePlaceholder': 'Ingresa tu apodo',
     'login.connectWallet': 'Conectar billetera',
+    'login.authenticate': 'Autenticar',
     'login.enter': 'Entrar al lobby',
     'login.connecting': 'Conectando al servidor...',
     'login.footer': 'Powered by Blockchain',
@@ -424,6 +506,10 @@ const translations = {
     'game.selectCompareTarget': 'Elige rival para comparar',
     'game.timeLeft': 'Tiempo',
     'game.autoFold': 'Auto-retirarse por tiempo',
+    'game.spectating': 'Modo espectador: no puedes actuar ni recibir cartas.',
+    'game.ownerOnlyStart': 'Solo el dueño de la sala puede iniciar la partida',
+    'game.spectators': 'Espectadores {n}',
+    'game.anteLabel': 'Ante',
 
     // Actions
     'action.fold': 'Retirarse',
@@ -466,6 +552,7 @@ const translations = {
     'hand.straight': 'Escalera',
     'hand.pair': 'Par',
     'hand.highCard': 'Carta alta',
+    'hand.unknown': 'Desconocido',
 
     // Toast / errors
     'toast.roomCodeCopied': 'Código de sala copiado',
@@ -475,6 +562,25 @@ const translations = {
     'toast.connectionError': 'Error de conexión',
     'toast.rotatePhone': 'Gira tu teléfono a modo horizontal',
     'error.allInOnly': 'Alguien fue all in — solo puedes retirarte o ir all in',
+    'notice.authExpired': 'Tu sesión expiró. Vuelve a autenticarte.',
+    'notice.lowChipsAutoClaim': 'Tus fichas están por debajo de 50. Reclamando el bono diario automáticamente.',
+    'notice.lowChipsExhausted': 'Tus fichas están por debajo de 50, pero el bono diario ya se agotó. Recarga.',
+    'notice.lowChipsClaimed': 'Pocas fichas detectadas. Bono diario reclamado automáticamente.',
+    'notice.walletAuthFailed': 'Falló la autenticación de firma de la billetera',
+    'wallet.connectTitle': 'Conectar billetera',
+    'wallet.connectDescription': 'Elige la billetera que quieres conectar',
+    'wallet.connectTonDescription': 'Conecta tu billetera TON para continuar',
+    'wallet.metamask': 'MetaMask',
+    'wallet.phantom': 'Phantom',
+    'wallet.telegramWallet': 'Telegram Wallet',
+    'wallet.tonkeeper': 'Tonkeeper',
+    'wallet.otherTonWallets': 'Otras billeteras TON',
+    'wallet.recommended': 'Recomendado',
+    'wallet.allWallets': 'Todas',
+    'wallet.tonAddress': 'Dirección TON',
+    'wallet.useAddressWithoutAuth': 'Usar dirección sin autorización',
+    'wallet.connectedTon': 'Billetera TON conectada',
+    'wallet.invalidTonAddress': 'Formato de dirección TON no válido',
 
     // Common
     'common.cancel': 'Cancelar',

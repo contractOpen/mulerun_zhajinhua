@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 
+const WALLET_SESSION_KEY = 'mule_wallet_session'
 const walletAddress = ref('')
 const walletChain = ref('') // 'evm', 'ton', 'sol'
 const walletConnected = ref(false)
@@ -12,6 +13,28 @@ const hasPhantom = computed(() => typeof window !== 'undefined' && !!window.sola
 const hasTonConnect = ref(false) // Set after TonConnect init
 
 let tonConnector = null
+
+function persistWalletSession() {
+  if (!walletAddress.value || !walletChain.value) return
+  window.localStorage?.setItem(WALLET_SESSION_KEY, JSON.stringify({
+    wallet: walletAddress.value,
+    chain: walletChain.value
+  }))
+}
+
+function restoreWalletSession() {
+  try {
+    const raw = window.localStorage?.getItem(WALLET_SESSION_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (!parsed?.wallet || !parsed?.chain) return
+    walletAddress.value = parsed.wallet
+    walletChain.value = parsed.chain
+    walletConnected.value = true
+  } catch (_) {}
+}
+
+restoreWalletSession()
 
 // EVM (MetaMask) connection
 async function connectEVM() {
@@ -26,12 +49,23 @@ async function connectEVM() {
       walletAddress.value = accounts[0]
       walletChain.value = 'evm'
       walletConnected.value = true
+      persistWalletSession()
     }
   } catch (e) {
     walletError.value = e.message || 'Failed to connect MetaMask'
   } finally {
     walletConnecting.value = false
   }
+}
+
+async function signEVMMessage(message) {
+  if (!window.ethereum || !walletAddress.value) {
+    throw new Error('MetaMask not connected')
+  }
+  return await window.ethereum.request({
+    method: 'personal_sign',
+    params: [message, walletAddress.value]
+  })
 }
 
 // TON (TonConnect) connection
@@ -52,6 +86,7 @@ async function connectTON() {
           walletAddress.value = account.address
           walletChain.value = 'ton'
           walletConnected.value = true
+          persistWalletSession()
         }
       }
     } else {
@@ -78,10 +113,43 @@ async function connectSOL() {
     walletAddress.value = resp.publicKey.toString()
     walletChain.value = 'sol'
     walletConnected.value = true
+    persistWalletSession()
   } catch (e) {
     walletError.value = e.message || 'Failed to connect Phantom'
   } finally {
     walletConnecting.value = false
+  }
+}
+
+async function signSOLMessage(message) {
+  const provider = window.solana
+  if (!provider?.isPhantom || !walletAddress.value) {
+    throw new Error('Phantom wallet not connected')
+  }
+  const encodedMessage = new TextEncoder().encode(message)
+  if (typeof provider.signMessage !== 'function') {
+    throw new Error('Current Phantom wallet does not support message signing')
+  }
+  const result = await provider.signMessage(encodedMessage, 'utf8')
+  const signature = result?.signature || result
+  if (!(signature instanceof Uint8Array)) {
+    throw new Error('Invalid Solana signature response')
+  }
+  let binary = ''
+  for (const byte of signature) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+async function signAuthMessage(message, chain) {
+  switch (chain) {
+    case 'evm':
+      return await signEVMMessage(message)
+    case 'sol':
+      return await signSOLMessage(message)
+    case 'ton':
+      throw new Error('TON signed login is not supported yet')
+    default:
+      throw new Error('Unsupported wallet chain for signed login')
   }
 }
 
@@ -91,6 +159,7 @@ function setManualAddress(address, chain) {
   walletChain.value = chain
   walletConnected.value = true
   walletError.value = ''
+  persistWalletSession()
 }
 
 // Validate address format locally
@@ -123,6 +192,7 @@ function disconnect() {
   walletChain.value = ''
   walletConnected.value = false
   walletError.value = ''
+  window.localStorage?.removeItem(WALLET_SESSION_KEY)
   if (tonConnector) {
     try { tonConnector.disconnect() } catch(e) {}
     tonConnector = null
@@ -134,6 +204,7 @@ export function useWallet() {
     walletAddress, walletChain, walletConnected, walletConnecting, walletError,
     hasMetaMask, hasPhantom, hasTonConnect,
     connectEVM, connectTON, connectSOL,
+    signAuthMessage,
     setManualAddress, validateAddress, detectChain, disconnect
   }
 }

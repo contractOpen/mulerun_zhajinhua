@@ -12,7 +12,11 @@ import (
 )
 
 func main() {
-	game.InitDB("zhajinhua.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "zhajinhua.db"
+	}
+	game.InitDB(dbPath)
 
 	// Set app mode from environment
 	appMode := strings.ToLower(os.Getenv("APP_MODE"))

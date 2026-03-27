@@ -5,5 +5,12 @@
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#0a0e1a",
-  "theme_color": "#0a0e1a"
+  "theme_color": "#0a0e1a",
+  "icons": [
+    {
+      "src": "/mule.png",
+      "sizes": "60x60",
+      "type": "image/png"
+    }
+  ]
 }

@@ -46,6 +46,46 @@ npm run dev              # 开发模式
 npm run build            # 构建 -> ../backend/static-tg/
 ```
 
+可选环境变量：
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+## Vercel 部署
+
+Telegram Mini App 前端可以直接单独部署到 Vercel。
+
+当前线上地址：
+
+```bash
+Project: https://vercel.com/contractopens-projects/mule-zjh-tg
+Production: https://mule-zjh-2hrrjvxlf-contractopens-projects.vercel.app
+Alias: https://mule-zjh-tg.vercel.app
+```
+
+1. 将 `frontend-tg/` 目录导入为一个独立 Vercel Project
+2. `Framework Preset = Vite`
+3. `Build Command` 使用：
+
+```bash
+npm run build
+```
+
+4. `Output Directory` 使用：
+
+```bash
+dist
+```
+
+5. 推荐配置环境变量：
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
 ## TG 专属特性
 
 ### 自动登录
@@ -154,6 +194,46 @@ frontend-tg/
 npm install              # Install dependencies
 npm run dev              # Dev server
 npm run build            # Build -> ../backend/static-tg/
+```
+
+Optional environment variables:
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+## Vercel Deployment
+
+The Telegram Mini App frontend can be deployed to Vercel as a standalone project.
+
+Current deployed URLs:
+
+```bash
+Project: https://vercel.com/contractopens-projects/mule-zjh-tg
+Production: https://mule-zjh-2hrrjvxlf-contractopens-projects.vercel.app
+Alias: https://mule-zjh-tg.vercel.app
+```
+
+1. Import the `frontend-tg/` directory as a separate Vercel project
+2. Set `Framework Preset = Vite`
+3. Use this build command:
+
+```bash
+npm run build
+```
+
+4. Use this output directory:
+
+```bash
+dist
+```
+
+5. Recommended environment variables:
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
 ```
 
 ## TG-Specific Features

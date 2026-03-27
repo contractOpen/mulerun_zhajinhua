@@ -91,6 +91,25 @@ func TestRemovePlayer(t *testing.T) {
 	}
 }
 
+func TestHandlePlayerLeave_RemovesPlayerOutsideActiveGame(t *testing.T) {
+	r := NewRoom("room1", 5)
+	p1 := NewPlayer("p1", "Alice", 0)
+	p2 := NewPlayer("p2", "Bob", 1)
+	_ = r.AddPlayer(p1)
+	_ = r.AddPlayer(p2)
+
+	wasTurn := r.HandlePlayerLeave("p1")
+	if wasTurn {
+		t.Fatal("expected no active turn in waiting room")
+	}
+	if len(r.Players) != 1 {
+		t.Fatalf("expected player to be removed outside active game, got %d players", len(r.Players))
+	}
+	if r.Players[0].ID != "p2" || r.Players[0].Seat != 0 {
+		t.Fatalf("expected remaining player p2 to be reseated to 0, got %+v", r.Players[0])
+	}
+}
+
 func TestFindPlayer_Found(t *testing.T) {
 	r := NewRoom("room1", 5)
 	p := NewPlayer("p1", "Alice", 0)
@@ -210,6 +229,50 @@ func TestProcessAction_Call(t *testing.T) {
 	}
 }
 
+func TestProcessAction_CompareAllowedAfterAllIn(t *testing.T) {
+	r := NewRoom("room1", 5)
+	p1 := NewPlayer("p1", "Alice", 0)
+	p2 := NewPlayer("p2", "Bob", 1)
+	p1.Chips = 500
+	p2.Chips = 500
+	_ = r.AddPlayer(p1)
+	_ = r.AddPlayer(p2)
+	_ = r.StartGame()
+
+	current := r.CurrentTurnPlayer()
+	var other *Player
+	for _, p := range r.Players {
+		if p.ID != current.ID {
+			other = p
+			break
+		}
+	}
+
+	allInEvent, err := r.ProcessAction(current.ID, Action{Type: ActionAllIn})
+	if err != nil {
+		t.Fatalf("all-in action failed: %v", err)
+	}
+	if !r.HasAllIn {
+		t.Fatal("expected room to enter all-in state")
+	}
+	if allInEvent.Amount <= 0 {
+		t.Fatalf("expected positive all-in amount, got %d", allInEvent.Amount)
+	}
+
+	r.NextTurn()
+
+	compareEvent, err := r.ProcessAction(other.ID, Action{Type: ActionCompare, TargetID: current.ID})
+	if err != nil {
+		t.Fatalf("compare after all-in failed: %v", err)
+	}
+	if compareEvent.Type != "compare" {
+		t.Fatalf("expected compare event, got %s", compareEvent.Type)
+	}
+	if compareEvent.Amount != allInEvent.Amount {
+		t.Fatalf("expected compare cost %d, got %d", allInEvent.Amount, compareEvent.Amount)
+	}
+}
+
 func TestProcessAction_Fold(t *testing.T) {
 	r := NewRoom("room1", 5)
 	p1 := NewPlayer("p1", "Alice", 0)
@@ -293,6 +356,35 @@ func TestProcessAction_Raise(t *testing.T) {
 	}
 	if event.Amount < 20 { // minimum raise is prevBet*2
 		t.Errorf("raise amount should be at least 20, got %d", event.Amount)
+	}
+}
+
+func TestProcessAction_RaiseLookedPlayerUsesFinalAmountOnlyOnce(t *testing.T) {
+	r := NewRoom("room1", 5)
+	p1 := NewPlayer("p1", "Alice", 0)
+	p2 := NewPlayer("p2", "Bob", 1)
+	p1.Chips = 500
+	p2.Chips = 500
+	_ = r.AddPlayer(p1)
+	_ = r.AddPlayer(p2)
+	_ = r.StartGame()
+
+	current := r.CurrentTurnPlayer()
+	current.Looked = true
+	initialChips := current.Chips
+
+	event, err := r.ProcessAction(current.ID, Action{Type: ActionRaise, Amount: 40})
+	if err != nil {
+		t.Fatalf("raise action failed: %v", err)
+	}
+	if event.Amount != 40 {
+		t.Fatalf("expected looked raise to deduct 40 exactly, got %d", event.Amount)
+	}
+	if current.Chips != initialChips-40 {
+		t.Fatalf("expected looked raise to reduce chips by 40, got initial=%d current=%d", initialChips, current.Chips)
+	}
+	if r.LastBet != 20 {
+		t.Fatalf("expected blind-equivalent last bet 20, got %d", r.LastBet)
 	}
 }
 

@@ -48,12 +48,29 @@ backend/
 |------|------|--------|
 | `APP_MODE` | 运行模式 | `te` (测试) / `pe` (生产) |
 | `PORT` | 监听端口 | 默认见配置 |
+| `DB_PATH` | SQLite 数据库文件路径 | 默认 `zhajinhua.db` |
 
 ## 运行方式
 
 ```bash
 go build -o server
 APP_MODE=te ./server
+```
+
+## Docker 独立部署
+
+在 `backend/` 目录下可以单独构建和运行后端：
+
+```bash
+docker compose up -d --build
+```
+
+常用变量：
+
+```bash
+APP_MODE=pe
+PORT=8080
+ADMIN_PASSWORD=change-me
 ```
 
 ## WebSocket 消息协议
@@ -145,12 +162,29 @@ backend/
 |----------|-------------|--------|
 | `APP_MODE` | Runtime mode | `te` (test) / `pe` (production) |
 | `PORT` | Listening port | See configuration |
+| `DB_PATH` | SQLite database file path | Defaults to `zhajinhua.db` |
 
 ## Running
 
 ```bash
 go build -o server
 APP_MODE=te ./server
+```
+
+## Standalone Docker Deployment
+
+You can build and run the backend directly from the `backend/` directory:
+
+```bash
+docker compose up -d --build
+```
+
+Common variables:
+
+```bash
+APP_MODE=pe
+PORT=8080
+ADMIN_PASSWORD=change-me
 ```
 
 ## WebSocket Message Protocol

@@ -55,6 +55,45 @@ npm run dev:pe           # PE 模式开发服务器
 npm run build:pe         # 构建 PE 版本 -> ../backend/static-pe/
 ```
 
+## Vercel 部署
+
+网页前端可以直接单独部署到 Vercel。
+
+当前线上地址：
+
+```bash
+Project: https://vercel.com/contractopens-projects/frontend
+Production: https://frontend-j3a60rxac-contractopens-projects.vercel.app
+Alias: https://frontend-gules-phi-47.vercel.app
+```
+
+1. 将 `frontend/` 目录导入为一个独立 Vercel Project
+2. 保持 `Framework Preset = Vite`
+3. `Build Command` 使用：
+
+```bash
+VITE_APP_MODE=pe npm run build
+```
+
+4. `Output Directory` 使用：
+
+```bash
+dist
+```
+
+5. 如需显式指定后端，配置环境变量：
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+当前代码默认也会连接：
+
+```bash
+https://game.atdl.link
+```
+
 ## 国际化 (i18n)
 
 支持 4 种语言，登录页提供语言切换器：
@@ -79,6 +118,15 @@ npm run build:pe         # 构建 PE 版本 -> ../backend/static-pe/
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `VITE_APP_MODE` | 构建模式 | `te` |
+| `VITE_API_BASE_URL` | 后端 HTTP 地址，例如 `https://1.2.3.4:8080` | 当前页面同源 |
+| `VITE_WS_URL` | 后端 WebSocket 地址，例如 `wss://1.2.3.4:8080/ws` | 根据页面地址自动推导 |
+
+当前仓库默认后端连接：
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
 
 运行时通过 `__APP_MODE__` 全局常量注入到前端代码中。
 
@@ -141,6 +189,45 @@ npm run dev:pe           # PE mode dev server
 npm run build:pe         # Build PE -> ../backend/static-pe/
 ```
 
+## Vercel Deployment
+
+The web frontend can be deployed to Vercel as a standalone project.
+
+Current deployed URLs:
+
+```bash
+Project: https://vercel.com/contractopens-projects/frontend
+Production: https://frontend-j3a60rxac-contractopens-projects.vercel.app
+Alias: https://frontend-gules-phi-47.vercel.app
+```
+
+1. Import the `frontend/` directory as a separate Vercel project
+2. Keep `Framework Preset = Vite`
+3. Use this build command:
+
+```bash
+VITE_APP_MODE=pe npm run build
+```
+
+4. Use this output directory:
+
+```bash
+dist
+```
+
+5. Optional environment variables:
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+The current codebase also defaults to:
+
+```bash
+https://game.atdl.link
+```
+
 ## Internationalization (i18n)
 
 Four languages supported, with a language picker on the login page:
@@ -165,5 +252,14 @@ Four languages supported, with a language picker on the login page:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VITE_APP_MODE` | Build mode | `te` |
+| `VITE_API_BASE_URL` | Backend HTTP base URL, e.g. `https://1.2.3.4:8080` | Same-origin with current page |
+| `VITE_WS_URL` | Backend WebSocket URL, e.g. `wss://1.2.3.4:8080/ws` | Derived from current page |
+
+Current default backend connection in this repo:
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
 
 Injected at build time as the `__APP_MODE__` global constant.

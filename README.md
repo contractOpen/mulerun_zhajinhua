@@ -116,6 +116,48 @@ cd frontend-tg
 npm install && npm run build
 ```
 
+### 前端部署到 Vercel
+
+当前推荐将两个前端作为独立项目部署到 Vercel：
+
+- `frontend/`：网页前端
+- `frontend-tg/`：Telegram Mini App
+
+当前已部署的网页前端地址：
+
+```bash
+Project: https://vercel.com/contractopens-projects/frontend
+Production: https://frontend-j3a60rxac-contractopens-projects.vercel.app
+Alias: https://frontend-gules-phi-47.vercel.app
+```
+
+当前已部署的 TG 前端地址：
+
+```bash
+Project: https://vercel.com/contractopens-projects/mule-zjh-tg
+Production: https://mule-zjh-2hrrjvxlf-contractopens-projects.vercel.app
+Alias: https://mule-zjh-tg.vercel.app
+```
+
+后端统一连接：
+
+```bash
+https://game.atdl.link
+```
+
+推荐在两个 Vercel Project 中都配置：
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+说明：
+
+- `frontend/` 生产构建命令：`VITE_APP_MODE=pe npm run build`
+- `frontend-tg/` 构建命令：`npm run build`
+- 两者输出目录均为：`dist`
+
 ### 许可证
 
 TBD
@@ -233,6 +275,48 @@ npm install && npm run build:te
 cd frontend-tg
 npm install && npm run build
 ```
+
+### Deploy Frontends To Vercel
+
+The recommended setup is to deploy the two frontends as separate Vercel projects:
+
+- `frontend/`: web frontend
+- `frontend-tg/`: Telegram Mini App frontend
+
+Current deployed web frontend URLs:
+
+```bash
+Project: https://vercel.com/contractopens-projects/frontend
+Production: https://frontend-j3a60rxac-contractopens-projects.vercel.app
+Alias: https://frontend-gules-phi-47.vercel.app
+```
+
+Current deployed TG frontend URLs:
+
+```bash
+Project: https://vercel.com/contractopens-projects/mule-zjh-tg
+Production: https://mule-zjh-2hrrjvxlf-contractopens-projects.vercel.app
+Alias: https://mule-zjh-tg.vercel.app
+```
+
+Both frontends connect to:
+
+```bash
+https://game.atdl.link
+```
+
+Recommended environment variables for both Vercel projects:
+
+```bash
+VITE_API_BASE_URL=https://game.atdl.link
+VITE_WS_URL=wss://game.atdl.link/ws
+```
+
+Notes:
+
+- `frontend/` production build command: `VITE_APP_MODE=pe npm run build`
+- `frontend-tg/` build command: `npm run build`
+- output directory for both: `dist`
 
 ### License
 

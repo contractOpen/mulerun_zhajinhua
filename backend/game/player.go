@@ -1,6 +1,7 @@
 package game
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -19,16 +20,17 @@ const (
 
 // Player 玩家
 type Player struct {
-	ID       string      `json:"id"`
-	Name     string      `json:"name"`
-	Avatar   int         `json:"avatar"`
-	Chips    int         `json:"chips"`
-	Hand     Hand        `json:"-"`
-	State    PlayerState `json:"state"`
-	BetTotal int         `json:"betTotal"`
-	Looked   bool        `json:"looked"` // 是否看牌
-	Seat     int         `json:"seat"`
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	Avatar        int         `json:"avatar"`
+	Chips         int         `json:"chips"`
+	Hand          Hand        `json:"-"`
+	State         PlayerState `json:"state"`
+	BetTotal      int         `json:"betTotal"`
+	Looked        bool        `json:"looked"` // 是否看牌
+	Seat          int         `json:"seat"`
 	IsBot         bool        `json:"isBot"`
+	IsSpectator   bool        `json:"isSpectator"`
 	WalletAddress string      `json:"walletAddress,omitempty"`
 	WalletChain   string      `json:"walletChain,omitempty"`
 	mu            sync.Mutex
@@ -76,7 +78,7 @@ func (p *Player) BotAction(room *Room) Action {
 			return Action{Type: ActionAllIn}
 		}
 		// 30% chance to bluff all-in with bad hand
-		if time.Now().UnixNano()%10 < 3 {
+		if rand.Float64() < 0.3 {
 			return Action{Type: ActionAllIn}
 		}
 		return Action{Type: ActionFold}

@@ -1,0 +1,82 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Go: Run Backend",
+      "type": "shell",
+      "command": "CGO_ENABLED=1 go run .",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "APP_MODE": "pe",
+          "PORT": "8080",
+          "DB_PATH": "${workspaceFolder}/backend/zhajinhua.db"
+        }
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Go: Test Backend",
+      "type": "shell",
+      "command": "CGO_ENABLED=1 go test ./...",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Go: Build Backend",
+      "type": "shell",
+      "command": "CGO_ENABLED=1 go build -o zhajinhua .",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Python: Run Current File",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "${file}"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Python: Run 实时输出.py",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/../实时输出.py"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Hardhat: Install Dependencies",
+      "type": "shell",
+      "command": "npm install",
+      "options": {
+        "cwd": "${workspaceFolder}/contracts/evm"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Hardhat: Compile",
+      "type": "shell",
+      "command": "npm run compile",
+      "options": {
+        "cwd": "${workspaceFolder}/contracts/evm"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Hardhat: Test",
+      "type": "shell",
+      "command": "npm test",
+      "options": {
+        "cwd": "${workspaceFolder}/contracts/evm"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

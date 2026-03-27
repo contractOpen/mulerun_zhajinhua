@@ -1,0 +1,15 @@
+{
+  "go.testFlags": [
+    "-v"
+  ],
+  "go.toolsManagement.autoUpdate": true,
+  "go.useLanguageServer": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false,
+  "python.terminal.activateEnvironment": true,
+  "solidity.defaultCompiler": "remote",
+  "solidity.compileUsingRemoteVersion": "v0.8.19+commit.7dd6d404",
+  "files.associations": {
+    "*.sol": "solidity"
+  }
+}
